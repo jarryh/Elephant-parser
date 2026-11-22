@@ -24,6 +24,13 @@ export function Modal({ title, onClose, children }: Props) {
         event.preventDefault();
         onClose();
       }}
+      onClose={(event) => {
+        // Chrome lets a second Escape skip onCancel. Reopen, and let onClose decide.
+        const element = event.currentTarget;
+        if (element.open || !element.isConnected) return;
+        element.showModal();
+        onClose();
+      }}
     >
       <header className="modal-head">
         <h2>{title}</h2>

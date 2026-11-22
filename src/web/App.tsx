@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { DataFile, LoadedFile } from '../shared/api';
+import type { AppConfig, DataFile, LoadedFile } from '../shared/api';
 import { api } from './api';
 import { Editor } from './Editor';
 
@@ -10,6 +10,15 @@ export function App() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(true);
   const [version, setVersion] = useState(0);
+
+  const [story, setStory] = useState<AppConfig['story']>(null);
+  useEffect(() => {
+    // Again on focus, so the Story button appears right after a key is added to .env.
+    const refresh = () => void api.config().then((config) => setStory(config.story), () => {});
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, []);
 
   const reload = useCallback(() => setVersion((value) => value + 1), []);
 
@@ -63,7 +72,7 @@ export function App() {
   );
 
   if (loaded) {
-    return <Editor key={loaded.file.name} loaded={loaded} picker={picker} loadError={error} />;
+    return <Editor key={loaded.file.name} loaded={loaded} picker={picker} loadError={error} story={story} />;
   }
 
   return (

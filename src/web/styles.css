@@ -746,3 +746,50 @@ label.inline {
 .raw-editor.covered {
   visibility: hidden;
 }
+
+/* Story */
+
+.story-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 0 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.story-options .choices {
+  grid-column: 1 / -1;
+}
+
+.cost {
+  margin-top: 6px;
+  padding: 2px 10px;
+  background: var(--raised);
+  border-radius: 6px;
+}
+
+.cost p {
+  margin: 6px 0;
+}
+
+.sent {
+  margin: 8px 0;
+}
+
+.sent summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.story-text {
+  max-height: 45vh;
+  margin-top: 10px;
+  padding: 12px 16px;
+  overflow: auto;
+  background: var(--chat);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: 16px/1.65 Georgia, serif;
+  white-space: pre-wrap;
+}

@@ -1,4 +1,4 @@
-import type { DataFile, LoadedFile } from '../shared/api';
+import type { AppConfig, DataFile, LoadedFile } from '../shared/api';
 import type { Workspace } from '../shared/workspace';
 
 export class ApiError extends Error {
@@ -36,6 +36,7 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 export const fileUrl = (name: string) => `/api/files/${encodeURIComponent(name)}`;
 
 export const api = {
+  config: () => getJson<AppConfig>('/api/config'),
   files: (signal?: AbortSignal) => getJson<DataFile[]>('/api/files', signal),
   load: (name: string, signal?: AbortSignal) => getJson<LoadedFile>(fileUrl(name), signal),
   workspace: (name: string, signal?: AbortSignal) => getJson<Workspace>(`${fileUrl(name)}/workspace`, signal),

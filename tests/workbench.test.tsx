@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseElephant } from '../src/shared/elephant';
 import { NO_FILTERS } from '../src/shared/filter';
+import type { AppConfig } from '../src/shared/api';
 import type { Workspace } from '../src/shared/workspace';
 import { indexLines } from '../src/web/components/entryHighlight';
 import { Workbench } from '../src/web/Workbench';
@@ -21,6 +22,13 @@ beforeEach(() => {
   vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(800);
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(26);
   HTMLElement.prototype.scrollTo = () => {};
+  // jsdom has no modal dialogs.
+  HTMLDialogElement.prototype.showModal = function () {
+    this.open = true;
+  };
+  HTMLDialogElement.prototype.close = function () {
+    this.open = false;
+  };
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -41,13 +49,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function show(patch: Partial<Workspace> = {}) {
+function show(patch: Partial<Workspace> = {}, story: AppConfig['story'] = null) {
   return render(
     <Workbench
       loaded={{ file: { name: 'Elephant.lua', size: 1, modified: 0 }, document: doc }}
       initial={{ revision: 0, removed: [], filters: { ...NO_FILTERS, channels: ['#4'] }, ...patch }}
       picker={null}
       loadError=""
+      story={story}
     />,
   );
 }
@@ -147,6 +156,31 @@ describe('click to remove', () => {
     show();
     await new Promise((resolve) => setTimeout(resolve, 450));
     expect(saves).toEqual([]);
+  });
+});
+
+describe('story', () => {
+  it('has no button without an API key', () => {
+    show();
+    expect(screen.queryByText('Story…')).toBeNull();
+  });
+
+  it('shows the cost and the exact text before anything is sent', () => {
+    const fetched = vi.fn();
+    vi.stubGlobal('fetch', fetched);
+    show({ filters: NO_FILTERS, removed: [idOf('bows')] }, { model: 'claude-opus-5-5' });
+    fireEvent.click(screen.getByText('Story…'));
+
+    const dialog = screen.getByLabelText('Turn the selection into a story');
+    expect(dialog.textContent).toContain('input tokens (rough, counted locally)');
+    expect(dialog.textContent).toMatch(/Typically .*at most about \$/);
+    const sent = dialog.querySelector('pre')!.textContent!;
+    expect(sent).toContain('Well met');
+    expect(sent).not.toMatch(/bows \\ deeply|a private secret/);
+    expect(fetched.mock.calls.filter(([url]) => String(url).includes('story'))).toEqual([]);
+
+    fireEvent.click(within(dialog).getByLabelText(/Include whispers/));
+    expect(dialog.querySelector('pre')!.textContent).toContain('a private secret');
   });
 });
 

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { LoadedFile } from '../shared/api';
+import type { AppConfig, LoadedFile } from '../shared/api';
 import { channelLabels, createMatcher, NO_FILTERS, type Filters } from '../shared/filter';
 import { computeSelection } from '../shared/selection';
 import type { LogItem } from '../shared/types';
@@ -9,6 +9,7 @@ import { ExportDialog } from './components/ExportDialog';
 import { FilterPanel } from './components/FilterPanel';
 import { LineMenu, type MenuTarget } from './components/LineMenu';
 import type { Reveal } from './components/RawView';
+import { StoryDialog } from './components/StoryDialog';
 import { useWorkspace } from './useWorkspace';
 
 // CodeMirror is large, so load it when the raw tab is first opened.
@@ -22,9 +23,10 @@ interface Props {
   initial: Workspace;
   picker: ReactNode;
   loadError: string;
+  story: AppConfig['story'];
 }
 
-export function Workbench({ loaded, initial, picker, loadError }: Props) {
+export function Workbench({ loaded, initial, picker, loadError, story }: Props) {
   const { document: doc, file } = loaded;
   const workspace = useWorkspace(file.name, initial);
   const { edits, filters, setFilters, status, setRemoved, undo, redo } = workspace;
@@ -37,6 +39,8 @@ export function Workbench({ loaded, initial, picker, loadError }: Props) {
   const [notice, setNotice] = useState('');
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const [exporting, setExporting] = useState(false);
+  // Keep the model, so losing the key mid-story doesn't close the dialog.
+  const [storyModel, setStoryModel] = useState<string | null>(null);
 
   const applied = useDeferredValue(filters);
   const selection = useMemo(() => computeSelection(doc, applied, removed), [doc, applied, removed]);
@@ -131,6 +135,11 @@ export function Workbench({ loaded, initial, picker, loadError }: Props) {
         </div>
         <div className="toolbar actions">
           <button onClick={() => setExporting(true)}>Export…</button>
+          {story && (
+            <button className="primary" onClick={() => setStoryModel(story.model)}>
+              Story…
+            </button>
+          )}
         </div>
       </header>
 
@@ -241,6 +250,8 @@ export function Workbench({ loaded, initial, picker, loadError }: Props) {
         <span>{status.state === 'saving' ? 'Saving…' : status.state === 'saved' ? 'Edits saved' : 'Not saved'}</span>
         <span>Game saved the file: {new Date(file.modified).toLocaleString()}</span>
       </footer>
+
+      {storyModel && <StoryDialog model={storyModel} messages={messages} onClose={() => setStoryModel(null)} />}
 
       {exporting && (
         <ExportDialog

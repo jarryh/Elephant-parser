@@ -35,6 +35,9 @@ export async function startServer(
   const app = createApp({
     dataDir: path.join(dir, 'Data'),
     workspaceDir: path.join(dir, 'workspace'),
+    envFile: path.join(dir, '.env'),
+    // A dead port, so no test can reach the real API.
+    anthropicBaseURL: 'http://127.0.0.1:9',
     ...options,
   });
   const server = createServer(app);

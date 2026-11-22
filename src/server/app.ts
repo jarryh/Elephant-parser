@@ -1,16 +1,21 @@
+import path from 'node:path';
 import express, { type ErrorRequestHandler, type Express } from 'express';
 import { parseWorkspace } from '../shared/workspace';
 import { DataFiles } from './dataFiles';
 import { HttpError } from './errors';
 import { localOnly } from './guard';
+import { addStoryRoutes } from './storyRoutes';
 import { WorkspaceStore } from './workspaceStore';
 
 export interface AppOptions {
   dataDir: string;
   workspaceDir: string;
+  envFile: string;
+  /** Tests point this at a fake API. */
+  anthropicBaseURL?: string;
 }
 
-export function createApp({ dataDir, workspaceDir }: AppOptions): Express {
+export function createApp({ dataDir, workspaceDir, envFile, anthropicBaseURL }: AppOptions): Express {
   const app = express();
   app.disable('x-powered-by');
   app.use(localOnly);
@@ -40,6 +45,8 @@ export function createApp({ dataDir, workspaceDir }: AppOptions): Express {
     if (!workspace) throw new HttpError(400, 'These edits are not in a valid format.');
     res.json({ revision: await workspaces.write(name, workspace) });
   });
+
+  addStoryRoutes(api, { envFile, anthropicBaseURL, storiesDir: path.join(workspaceDir, 'stories') });
 
   api.use(() => {
     throw new HttpError(404, 'Unknown API route.');
