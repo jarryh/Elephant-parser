@@ -239,7 +239,7 @@ export function StoryDialog({ model, messages, onClose }: Props) {
           {result.inputTokens.toLocaleString()} tokens in, {result.outputTokens.toLocaleString()} out
           {spent === null ? '' : `, ${dollars(spent)}`}.
           {result.truncated && ' The story was cut off at the length limit.'}
-          {result.fellBack && ` A safety check declined the request, so ${result.model} took over.`}
+          {result.fellBack && ` A safety check declined this scene, so ${result.model} took over.`}
         </p>
       )}
 

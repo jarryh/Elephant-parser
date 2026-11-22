@@ -73,7 +73,10 @@ export function addStoryRoutes(api: Router, { envFile, storiesDir, anthropicBase
           inputTokens: message.usage.input_tokens,
           outputTokens: message.usage.output_tokens,
           truncated: message.stop_reason !== 'end_turn',
-          fellBack: message.content.some((block) => block.type === 'fallback'),
+          fellBack:
+            message.content.some((block) => block.type === 'fallback') ||
+            // For about an hour after a fallback, that model answers directly, without a block.
+            (message.usage.iterations ?? []).some((entry) => entry.type === 'fallback_message'),
         });
       }
     } catch (error) {

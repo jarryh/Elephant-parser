@@ -18,6 +18,8 @@ interface Script {
   status?: number;
   stop?: string;
   fallbackTo?: string;
+  /** Served by the fallback model because an earlier request fell back. */
+  sticky?: boolean;
   hang?: boolean;
   parts?: string[];
 }
@@ -65,7 +67,7 @@ beforeEach(async () => {
         id: 'msg_fake',
         type: 'message',
         role: 'assistant',
-        model: body.model,
+        model: script.sticky ? 'fallback-model' : body.model,
         content: [],
         stop_reason: null,
         stop_sequence: null,
@@ -91,7 +93,12 @@ beforeEach(async () => {
     event('content_block_stop', { index });
     event('message_delta', {
       delta: { stop_reason: script.stop ?? 'end_turn', stop_sequence: null },
-      usage: { output_tokens: 42 },
+      usage: {
+        output_tokens: 42,
+        ...(script.sticky && {
+          iterations: [{ type: 'fallback_message', model: 'fallback-model', input_tokens: 100, output_tokens: 42 }],
+        }),
+      },
     });
     event('message_stop', {});
     res.end();
@@ -209,6 +216,11 @@ describe('with a key', () => {
 
   it('reports a fallback to another model', async () => {
     script.fallbackTo = 'fallback-model';
+    expect((await write()).at(-1)).toMatchObject({ type: 'done', model: 'fallback-model', fellBack: true });
+  });
+
+  it('reports a fallback model that answers directly, after an earlier fallback', async () => {
+    script.sticky = true;
     expect((await write()).at(-1)).toMatchObject({ type: 'done', model: 'fallback-model', fellBack: true });
   });
 

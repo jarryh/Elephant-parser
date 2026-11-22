@@ -67,9 +67,10 @@ actions act on the whole file.
 The **Raw Lua** tab shows the same selection in the original source. Click a block to
 remove it, or preview the cleaned export there.
 
-Edits and filters save automatically to `workspace/`. They are stored by message rather
-than by line number, so they still apply after the log has grown. Press **Reload** to
-read a newer copy of the file.
+Edits and filters save automatically to `workspace/`, separately for each file name.
+They are stored by message rather than by line number, so they still apply when a newer
+copy replaces the file. Press **Reload** to read it. A copy under another name, such as
+a dated backup, starts without edits.
 
 ### Export
 
