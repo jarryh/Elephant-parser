@@ -86,6 +86,21 @@ describe('web server', () => {
     expect(reply.body).toContain('typeLabel');
   });
 
+  it.each(['/__open-in-editor?file=package.json', '/__OPEN-in-editor.x?file=a', '/__open%2Din-editor?file=a'])(
+    'refuses to open an editor through %s',
+    async (target) => {
+      expect((await server.send('GET', target)).status).toBe(403);
+    },
+  );
+
+  it.each(['/api/files', '/API/files', '//api/files', '/%61pi/files', '/api/./files', '/x/../api/files'])(
+    'never gives API data to another site through %s',
+    async (target) => {
+      const reply = await server.send('GET', target, undefined, { origin: 'https://evil.example' });
+      expect(reply.body).not.toContain('"modified"');
+    },
+  );
+
   // package.json and LICENSE stand in for Data/ and .env, which don't exist on every machine.
   it.each([
     [`/@fs/${project}package.json`, '"devDependencies"'],

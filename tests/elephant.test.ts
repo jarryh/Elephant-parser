@@ -50,6 +50,12 @@ describe('parseElephant', () => {
     expect(doc.items.indexOf(marker)).toBeLessThan(doc.items.indexOf(first));
   });
 
+  it('dates a marker in a log without messages by its text, not 1970', () => {
+    const source =
+      'ElephantDB={char={A={logs={{logs={{type="SYSTEM",arg1="Logging started for A on 03/04/2030 at 05:06:07."}}}}}}}';
+    expect(parseElephant(source).items[0]!.at).toBe(new Date(2030, 2, 4, 5, 6, 7).getTime() / 1000);
+  });
+
   it('puts everything in time order', () => {
     const times = doc.items.map((item) => item.at);
     expect(times).toEqual([...times].sort((a, b) => a - b));

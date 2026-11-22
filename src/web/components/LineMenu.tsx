@@ -35,18 +35,11 @@ export function LineMenu({ target, messages, labels, removed, onClose, onFilter,
   }, [x, y, item]);
 
   useEffect(() => {
-    const onPointer = (event: Event) => {
-      if (!box.current?.contains(event.target as Node)) onClose();
-    };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
-    document.addEventListener('pointerdown', onPointer);
     document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointer);
-      document.removeEventListener('keydown', onKey);
-    };
+    return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   const run = (action: () => void) => () => {
@@ -67,46 +60,57 @@ export function LineMenu({ target, messages, labels, removed, onClose, onFilter,
 
   const { sender } = item;
   return (
-    <div className="menu" role="menu" ref={box} style={position}>
-      <p className="menu-title">
-        {dayTitle(clock.day(item.at))}, {clock.time(item.at)}
-      </p>
+    <>
+      {/* Takes the click that closes the menu, which would otherwise remove a line. */}
+      <div
+        className="menu-backdrop"
+        onClick={onClose}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onClose();
+        }}
+      />
+      <div className="menu" role="menu" ref={box} style={position}>
+        <p className="menu-title">
+          {dayTitle(clock.day(item.at))}, {clock.time(item.at)}
+        </p>
 
-      {sender && (
+        {sender && (
+          <div className="menu-group">
+            <button role="menuitem" onClick={run(() => onFilter({ senders: [sender] }))}>
+              Show only {sender}
+            </button>
+            {groupAction(
+              messages.filter((entry) => entry.sender === sender),
+              `from ${sender}`,
+            )}
+          </div>
+        )}
+
+        {item.channels.map((channel) => (
+          <div className="menu-group" key={channel}>
+            <button role="menuitem" onClick={run(() => onFilter({ channels: [channel] }))}>
+              Show only {labels.get(channel)}
+            </button>
+            {groupAction(
+              messages.filter((entry) => entry.channels.includes(channel)),
+              `in ${labels.get(channel)}`,
+            )}
+          </div>
+        ))}
+
         <div className="menu-group">
-          <button role="menuitem" onClick={run(() => onFilter({ senders: [sender] }))}>
-            Show only {sender}
+          <button role="menuitem" onClick={run(() => onFilter({ from: Math.floor(item.at / 60) * 60 }))}>
+            Start the period here
           </button>
-          {groupAction(
-            messages.filter((entry) => entry.sender === sender),
-            `from ${sender}`,
-          )}
-        </div>
-      )}
-
-      {item.channels.map((channel) => (
-        <div className="menu-group" key={channel}>
-          <button role="menuitem" onClick={run(() => onFilter({ channels: [channel] }))}>
-            Show only {labels.get(channel)}
+          <button role="menuitem" onClick={run(() => onFilter({ to: Math.floor(item.at / 60) * 60 + 59 }))}>
+            End the period here
           </button>
-          {groupAction(
-            messages.filter((entry) => entry.channels.includes(channel)),
-            `in ${labels.get(channel)}`,
-          )}
+          <button role="menuitem" onClick={run(() => onShowRaw(item.id))}>
+            Show in raw Lua
+          </button>
         </div>
-      ))}
-
-      <div className="menu-group">
-        <button role="menuitem" onClick={run(() => onFilter({ from: Math.floor(item.at / 60) * 60 }))}>
-          Start the period here
-        </button>
-        <button role="menuitem" onClick={run(() => onFilter({ to: Math.floor(item.at / 60) * 60 + 59 }))}>
-          End the period here
-        </button>
-        <button role="menuitem" onClick={run(() => onShowRaw(item.id))}>
-          Show in raw Lua
-        </button>
       </div>
-    </div>
+    </>
   );
 }

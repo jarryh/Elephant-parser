@@ -137,6 +137,14 @@ describe('click to remove', () => {
     expect(line('Well met').classList).not.toContain('removed');
   });
 
+  it('closes the menu on an outside click, without removing anything', () => {
+    show();
+    fireEvent.contextMenu(line('bows'));
+    fireEvent.click(document.querySelector('.menu-backdrop')!);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(removed().some(Boolean)).toBe(false);
+  });
+
   it('removes a whole channel from the filter list, and offers undo', () => {
     show();
     fireEvent.click(screen.getByLabelText(/^Remove all \d+ in Say$/));

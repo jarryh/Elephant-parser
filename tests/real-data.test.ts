@@ -59,6 +59,11 @@ describe.skipIf(!present)('the real Data/Elephant.lua', () => {
     expect(misplaced.length).toBe(0);
   });
 
+  it('dates every message and marker', () => {
+    const undated = parseElephant(source).items.filter((item) => item.kind !== 'spacer' && item.at === 0);
+    expect(undated.length).toBe(0);
+  });
+
   it('exports unchanged when everything is kept', () => {
     const doc = parseElephant(source);
     const { states } = computeSelection(doc, NO_FILTERS, new Set());

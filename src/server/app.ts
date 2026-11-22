@@ -3,7 +3,7 @@ import express, { type ErrorRequestHandler, type Express } from 'express';
 import { parseWorkspace } from '../shared/workspace';
 import { DataFiles } from './dataFiles';
 import { HttpError } from './errors';
-import { localOnly } from './guard';
+import { localHostOnly, sameOriginOnly } from './guard';
 import { addStoryRoutes } from './storyRoutes';
 import { WorkspaceStore } from './workspaceStore';
 
@@ -18,7 +18,7 @@ export interface AppOptions {
 export function createApp({ dataDir, workspaceDir, envFile, anthropicBaseURL }: AppOptions): Express {
   const app = express();
   app.disable('x-powered-by');
-  app.use(localOnly);
+  app.use(localHostOnly);
 
   const files = new DataFiles(dataDir);
   const workspaces = new WorkspaceStore(workspaceDir);
@@ -52,7 +52,7 @@ export function createApp({ dataDir, workspaceDir, envFile, anthropicBaseURL }: 
     throw new HttpError(404, 'Unknown API route.');
   });
   api.use(handleError);
-  app.use('/api', api);
+  app.use('/api', sameOriginOnly, api);
   return app;
 }
 

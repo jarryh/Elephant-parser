@@ -176,7 +176,7 @@ function readEntries(log: LogInfo, list: LuaTable): { id: string; field: LuaFiel
       owner: log.owner,
       channels: [log.channel],
       time,
-      at: time ?? (kind === 'marker' ? (nextTime[i] ?? previousTime) : previousTime) ?? 0,
+      at: time ?? (kind === 'marker' ? (nextTime[i] ?? markerDate(arg1) ?? previousTime) : previousTime) ?? 0,
       type,
       raw,
       text: stripMarkup(raw),
@@ -192,6 +192,14 @@ function readEntries(log: LogInfo, list: LuaTable): { id: string; field: LuaFiel
     if (time !== null) previousTime = time;
     return { id, field, item };
   });
+}
+
+/** The date in "Logging started ... on 03/01/2030 at 18:00:00." It's local time, month first. */
+function markerDate(text: string): number | null {
+  const found = /(\d\d)\/(\d\d)\/(\d{4})\D+(\d\d):(\d\d):(\d\d)/.exec(text);
+  if (!found) return null;
+  const [month, day, year, hour, minute, second] = found.slice(1).map(Number);
+  return new Date(year!, month! - 1, day, hour, minute, second).getTime() / 1000;
 }
 
 /** Built-in emotes ("Ann waves at you.") store no sender, so match known names. */

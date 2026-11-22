@@ -522,6 +522,12 @@ code {
   opacity: 1;
 }
 
+.menu-backdrop {
+  position: fixed;
+  z-index: 19;
+  inset: 0;
+}
+
 .menu {
   position: fixed;
   z-index: 20;
