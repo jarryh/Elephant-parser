@@ -405,3 +405,259 @@ code {
     border-bottom: 1px solid var(--line);
   }
 }
+
+/* Editing */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tabs [aria-selected='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.editbar {
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.editbar .hint {
+  margin-left: auto;
+}
+
+.divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 3px;
+  background: var(--line);
+}
+
+.panes {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Not display: none, which would lose the scroll position. */
+.pane.inactive {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.line {
+  position: relative;
+  cursor: pointer;
+}
+
+.line:hover {
+  background: rgb(255 123 123 / 10%);
+  box-shadow: inset 3px 0 var(--danger);
+}
+
+.line.removed {
+  background: rgb(255 123 123 / 5%);
+}
+
+.line.removed .body {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+
+.line.removed:hover {
+  background: rgb(169 156 240 / 10%);
+  box-shadow: inset 3px 0 var(--accent);
+}
+
+.line .body button.sender {
+  display: inline;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: inherit;
+  white-space: inherit;
+  text-decoration: inherit;
+}
+
+.line .body button.sender:hover {
+  text-decoration: underline;
+}
+
+.line .line-hint {
+  flex: none;
+  width: 48px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+  visibility: hidden;
+}
+
+.line .more {
+  flex: none;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  line-height: 1;
+  opacity: 0;
+}
+
+.line:hover .line-hint {
+  visibility: visible;
+}
+
+.line:hover .more,
+.line .more:focus-visible {
+  opacity: 1;
+}
+
+.menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 210px;
+  max-width: min(420px, 100vw - 8px);
+  padding: 4px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 50%);
+}
+
+.menu-title {
+  margin: 4px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.menu-group {
+  padding: 3px 0;
+  border-top: 1px solid var(--line);
+}
+
+.menu button {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  background: none;
+  border-color: transparent;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.toast {
+  position: absolute;
+  z-index: 10;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 14px;
+  padding: 8px 14px;
+  background: var(--raised);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+.statusbar .spacer {
+  flex: 1;
+}
+
+/* Raw Lua */
+
+.raw {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.raw-editor {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 4px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.swatch::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border-radius: 2px;
+  background: #4f9d75;
+}
+
+.swatch.removed::before {
+  background: var(--danger);
+}
+
+.swatch.out::before {
+  background: #555b67;
+}
+
+.cm-line.entry {
+  position: relative;
+  cursor: pointer;
+}
+
+.cm-line.entry-kept {
+  box-shadow: inset 2px 0 #4f9d75;
+}
+
+.cm-line.entry-out {
+  opacity: 0.35;
+}
+
+.cm-line.entry-removed {
+  background: rgb(255 123 123 / 8%);
+  box-shadow: inset 2px 0 var(--danger);
+}
+
+.cm-line.entry-removed,
+.cm-line.entry-removed span {
+  color: #8f7076;
+  text-decoration: line-through;
+}
+
+.cm-line.entry-hover {
+  background: rgb(255 123 123 / 16%);
+}
+
+.cm-line.entry-removed.entry-hover {
+  background: rgb(169 156 240 / 18%);
+}
+
+.cm-line.entry-hover-first::after {
+  content: 'click to remove';
+  position: absolute;
+  right: 12px;
+  color: var(--danger);
+  font: 12px 'Segoe UI', system-ui, sans-serif;
+}
+
+.cm-line.entry-removed.entry-hover-first::after {
+  content: 'click to restore';
+  color: var(--accent);
+}

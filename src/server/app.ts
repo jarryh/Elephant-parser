@@ -1,29 +1,44 @@
 import express, { type ErrorRequestHandler, type Express } from 'express';
+import { parseWorkspace } from '../shared/workspace';
 import { DataFiles } from './dataFiles';
 import { HttpError } from './errors';
 import { localOnly } from './guard';
+import { WorkspaceStore } from './workspaceStore';
 
 export interface AppOptions {
   dataDir: string;
+  workspaceDir: string;
 }
 
-export function createApp({ dataDir }: AppOptions): Express {
+export function createApp({ dataDir, workspaceDir }: AppOptions): Express {
   const app = express();
   app.disable('x-powered-by');
   app.use(localOnly);
 
   const files = new DataFiles(dataDir);
+  const workspaces = new WorkspaceStore(workspaceDir);
   const api = express.Router();
   api.use((_req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
   });
+  api.use(express.json({ limit: '10mb' }));
 
   api.get('/files', async (_req, res) => {
     res.json(await files.list());
   });
   api.get('/files/:name', async (req, res) => {
     res.json(await files.load(req.params.name));
+  });
+  api.get('/files/:name/workspace', async (req, res) => {
+    const { name } = await files.find(req.params.name);
+    res.json(await workspaces.read(name));
+  });
+  api.put('/files/:name/workspace', async (req, res) => {
+    const { name } = await files.find(req.params.name);
+    const workspace = parseWorkspace(req.body);
+    if (!workspace) throw new HttpError(400, 'These edits are not in a valid format.');
+    res.json({ revision: await workspaces.write(name, workspace) });
   });
 
   api.use(() => {

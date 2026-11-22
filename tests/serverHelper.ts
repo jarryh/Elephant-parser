@@ -32,7 +32,11 @@ export async function startServer(
   await mkdir(path.dirname(dataFile));
   await writeFile(dataFile, FIXTURE_CRLF);
 
-  const app = createApp({ dataDir: path.join(dir, 'Data'), ...options });
+  const app = createApp({
+    dataDir: path.join(dir, 'Data'),
+    workspaceDir: path.join(dir, 'workspace'),
+    ...options,
+  });
   const server = createServer(app);
   const teardown = await extend?.(app, server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

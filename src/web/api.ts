@@ -1,4 +1,5 @@
 import type { DataFile, LoadedFile } from '../shared/api';
+import type { Workspace } from '../shared/workspace';
 
 export class ApiError extends Error {
   constructor(
@@ -37,4 +38,9 @@ export const fileUrl = (name: string) => `/api/files/${encodeURIComponent(name)}
 export const api = {
   files: (signal?: AbortSignal) => getJson<DataFile[]>('/api/files', signal),
   load: (name: string, signal?: AbortSignal) => getJson<LoadedFile>(fileUrl(name), signal),
+  workspace: (name: string, signal?: AbortSignal) => getJson<Workspace>(`${fileUrl(name)}/workspace`, signal),
+  async saveWorkspace(name: string, workspace: Workspace): Promise<number> {
+    const response = await request(`${fileUrl(name)}/workspace`, { method: 'PUT', body: JSON.stringify(workspace) });
+    return ((await response.json()) as { revision: number }).revision;
+  },
 };

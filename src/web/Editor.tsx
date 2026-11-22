@@ -1,8 +1,8 @@
-import { useDeferredValue, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { LoadedFile } from '../shared/api';
-import { createMatcher, NO_FILTERS, type Filters } from '../shared/filter';
-import { ChatView } from './components/ChatView';
-import { FilterPanel } from './components/FilterPanel';
+import type { Workspace } from '../shared/workspace';
+import { api } from './api';
+import { Workbench } from './Workbench';
 
 interface Props {
   loaded: LoadedFile;
@@ -10,38 +10,36 @@ interface Props {
   loadError: string;
 }
 
+/** Nothing can be edited until the saved edits are loaded, or they could be overwritten. */
 export function Editor({ loaded, picker, loadError }: Props) {
-  const { document: doc, file } = loaded;
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
+  const { name } = loaded.file;
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [error, setError] = useState('');
 
-  const applied = useDeferredValue(filters);
-  const shown = useMemo(() => doc.items.filter(createMatcher(applied)), [doc, applied]);
-  const total = useMemo(() => doc.items.filter((item) => item.kind === 'message').length, [doc]);
-  const shownMessages = useMemo(() => shown.filter((item) => item.kind === 'message').length, [shown]);
+  useEffect(() => {
+    const controller = new AbortController();
+    api.workspace(name, controller.signal).then(setWorkspace, (cause: unknown) => {
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause));
+    });
+    return () => controller.abort();
+  }, [name]);
+
+  if (workspace) return <Workbench loaded={loaded} initial={workspace} picker={picker} loadError={loadError} />;
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <h1>Elephant parser</h1>
-        {picker}
-      </header>
-      {loadError && (
-        <p className="banner error" role="alert">
-          {loadError}
-        </p>
+    <main className="welcome">
+      <h1>Elephant parser</h1>
+      {error ? (
+        <>
+          <p className="error" role="alert">
+            {error}
+          </p>
+          <button onClick={() => location.reload()}>Try again</button>
+        </>
+      ) : (
+        <p>Loading your edits…</p>
       )}
-      <div className="workarea">
-        <FilterPanel doc={doc} filters={filters} onChange={setFilters} />
-        <main className="stage">
-          <ChatView items={shown} />
-        </main>
-      </div>
-      <footer className="statusbar">
-        <span>
-          <strong>{shownMessages}</strong> of {total} messages shown
-        </span>
-        <span>File saved by the game: {new Date(file.modified).toLocaleString()}</span>
-      </footer>
-    </div>
+      {picker}
+    </main>
   );
 }

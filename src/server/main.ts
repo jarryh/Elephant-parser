@@ -9,7 +9,10 @@ const root = fileURLToPath(new URL('../..', import.meta.url));
 const envFile = path.join(root, '.env');
 const port = Number(process.env.PORT || readEnv(envFile).PORT || 5180);
 
-const app = createApp({ dataDir: path.join(root, 'Data') });
+const app = createApp({
+  dataDir: path.join(root, 'Data'),
+  workspaceDir: path.join(root, 'workspace'),
+});
 const server = createServer(app);
 
 server.on('error', (error: NodeJS.ErrnoException) => {

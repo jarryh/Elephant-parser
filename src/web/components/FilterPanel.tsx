@@ -16,9 +16,11 @@ interface Props {
   doc: LogDocument;
   filters: Filters;
   onChange: (filters: Filters) => void;
+  /** Removes a channel or sender within the chosen characters and period. */
+  onRemove: (group: Partial<Filters>, label: string) => void;
 }
 
-export function FilterPanel({ doc, filters, onChange }: Props) {
+export function FilterPanel({ doc, filters, onChange, onRemove }: Props) {
   const { owners, from, to } = filters;
   const facets = useMemo(() => computeFacets(doc, { owners, from, to }, clock.day), [doc, owners, from, to]);
   const labels = useMemo(() => channelLabels(doc), [doc]);
@@ -40,6 +42,7 @@ export function FilterPanel({ doc, filters, onChange }: Props) {
     .sort((a, b) => b.count - a.count);
   const senderChoices = choices(facets.senders, filters.senders).sort((a, b) => b.count - a.count);
 
+  const scope = owners.length || from !== null || to !== null ? ' (chosen characters and period)' : '';
   const days = [...facets.days].sort(([a], [b]) => b.localeCompare(a));
   const selectedDay =
     days.find(([day]) => {
@@ -118,6 +121,11 @@ export function FilterPanel({ doc, filters, onChange }: Props) {
         choices={channelChoices}
         selected={filters.channels}
         onChange={(value) => set({ channels: value })}
+        action={{
+          label: '×',
+          title: (choice) => `Remove all ${choice.count} in ${choice.label}${scope}`,
+          run: (choice) => onRemove({ channels: [choice.value] }, choice.label),
+        }}
       />
       <div className="preset">
         <button
@@ -139,6 +147,11 @@ export function FilterPanel({ doc, filters, onChange }: Props) {
         choices={senderChoices}
         selected={filters.senders}
         onChange={(value) => set({ senders: value })}
+        action={{
+          label: '×',
+          title: (choice) => `Remove all ${choice.count} from ${choice.label}${scope}`,
+          run: (choice) => onRemove({ senders: [choice.value] }, choice.label),
+        }}
         searchable
         open={false}
       />
