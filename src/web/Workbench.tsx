@@ -5,6 +5,7 @@ import { computeSelection } from '../shared/selection';
 import type { LogItem } from '../shared/types';
 import type { Workspace } from '../shared/workspace';
 import { ChatView } from './components/ChatView';
+import { ExportDialog } from './components/ExportDialog';
 import { FilterPanel } from './components/FilterPanel';
 import { LineMenu, type MenuTarget } from './components/LineMenu';
 import type { Reveal } from './components/RawView';
@@ -35,6 +36,7 @@ export function Workbench({ loaded, initial, picker, loadError }: Props) {
   const [menu, setMenu] = useState<MenuTarget | null>(null);
   const [notice, setNotice] = useState('');
   const [reveal, setReveal] = useState<Reveal | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const applied = useDeferredValue(filters);
   const selection = useMemo(() => computeSelection(doc, applied, removed), [doc, applied, removed]);
@@ -126,6 +128,9 @@ export function Workbench({ loaded, initial, picker, loadError }: Props) {
           <button role="tab" aria-selected={tab === 'raw'} onClick={() => showRaw()}>
             Raw Lua
           </button>
+        </div>
+        <div className="toolbar actions">
+          <button onClick={() => setExporting(true)}>Export…</button>
         </div>
       </header>
 
@@ -236,6 +241,17 @@ export function Workbench({ loaded, initial, picker, loadError }: Props) {
         <span>{status.state === 'saving' ? 'Saving…' : status.state === 'saved' ? 'Edits saved' : 'Not saved'}</span>
         <span>Game saved the file: {new Date(file.modified).toLocaleString()}</span>
       </footer>
+
+      {exporting && (
+        <ExportDialog
+          fileName={file.name}
+          doc={doc}
+          messages={messages}
+          states={states}
+          labels={labels}
+          onClose={() => setExporting(false)}
+        />
+      )}
 
       {menu && (
         <LineMenu

@@ -661,3 +661,88 @@ code {
   content: 'click to restore';
   color: var(--accent);
 }
+
+/* Dialogs */
+
+.topbar .actions {
+  margin-left: auto;
+}
+
+.modal {
+  width: min(900px, 100vw - 32px);
+  max-height: calc(100vh - 32px);
+  padding: 16px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.modal::backdrop {
+  background: rgb(0 0 0 / 60%);
+}
+
+.modal-head,
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-head h2 {
+  flex: 1;
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.modal-actions {
+  margin-top: 10px;
+}
+
+.modal-actions .hint {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 8px 0;
+}
+
+.choices label,
+label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.preview {
+  height: min(50vh, 440px);
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  background: var(--chat);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: 12px/1.5 Consolas, ui-monospace, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.raw-stack {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.raw-stack > .raw-editor {
+  position: absolute;
+  inset: 0;
+}
+
+.raw-editor.covered {
+  visibility: hidden;
+}

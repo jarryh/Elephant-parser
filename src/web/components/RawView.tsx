@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EditorView } from '@codemirror/view';
 import type { EntryState } from '../../shared/selection';
 import type { LogDocument } from '../../shared/types';
 import { useRangeToggle } from '../useRangeToggle';
 import { entryHighlight, setHover, setStates } from './entryHighlight';
 import { createLuaView } from './luaEditor';
+import { LuaPreview } from './LuaPreview';
 
 /** A new object each time, so the same line can be revealed twice. */
 export interface Reveal {
@@ -21,6 +22,7 @@ interface Props {
 
 export function RawView({ doc, states, removed, setRemoved, reveal }: Props) {
   const host = useRef<HTMLDivElement>(null);
+  const [preview, setPreview] = useState(false);
   const view = useRef<EditorView | null>(null);
   const keys = useMemo(() => doc.entries.map((_, index) => index), [doc]);
   const toggle = useRangeToggle(keys, (index) => doc.entries[index]!.id, removed, setRemoved);
@@ -50,6 +52,7 @@ export function RawView({ doc, states, removed, setRemoved, reveal }: Props) {
 
   useEffect(() => {
     if (!reveal) return;
+    setPreview(false);
     // Prefer the copy that's in a selected channel.
     let index = doc.entries.findIndex((entry, i) => entry.id === reveal.id && latestStates.current[i] !== 'out');
     if (index < 0) index = doc.entries.findIndex((entry) => entry.id === reveal.id);
@@ -76,15 +79,23 @@ export function RawView({ doc, states, removed, setRemoved, reveal }: Props) {
   return (
     <div className="raw">
       <div className="legend">
+        <label className="inline">
+          <input type="checkbox" checked={preview} onChange={(event) => setPreview(event.target.checked)} />
+          Preview the Lua export
+        </label>
         <span className="swatch kept">selected</span>
         <span className="swatch removed">removed</span>
         <span className="swatch out">filtered out</span>
-        <button className="link" onClick={nextSelected}>
+        <button className="link" onClick={nextSelected} disabled={preview}>
           Next selected message ↓
         </button>
         <span className="hint">Click a block to remove it. The file itself is never changed. Ctrl+F searches.</span>
       </div>
-      <div className="raw-editor" ref={host} />
+      <div className="raw-stack">
+        {/* Kept mounted behind the preview, to keep its scroll position. */}
+        <div className={preview ? 'raw-editor covered' : 'raw-editor'} ref={host} />
+        {preview && <LuaPreview doc={doc} states={states} />}
+      </div>
     </div>
   );
 }
