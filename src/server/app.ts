@@ -15,6 +15,9 @@ export interface AppOptions {
   anthropicBaseURL?: string;
 }
 
+/** For a dropped log, which travels as JSON. The browser refuses larger files itself. */
+const UPLOAD_LIMIT = '64mb';
+
 export function createApp({ dataDir, workspaceDir, envFile, anthropicBaseURL }: AppOptions): Express {
   const app = express();
   app.disable('x-powered-by');
@@ -26,6 +29,12 @@ export function createApp({ dataDir, workspaceDir, envFile, anthropicBaseURL }: 
   api.use((_req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
+  });
+  // Before the general parser, as a log can be larger than its limit.
+  api.put('/files/:name', express.json({ limit: UPLOAD_LIMIT }), async (req, res) => {
+    const content: unknown = (req.body as { content?: unknown } | undefined)?.content;
+    if (typeof content !== 'string') throw new HttpError(400, 'No file was sent.');
+    res.json(await files.add(req.params.name, content));
   });
   api.use(express.json({ limit: '10mb' }));
 
@@ -44,6 +53,11 @@ export function createApp({ dataDir, workspaceDir, envFile, anthropicBaseURL }: 
     const workspace = parseWorkspace(req.body);
     if (!workspace) throw new HttpError(400, 'These edits are not in a valid format.');
     res.json({ revision: await workspaces.write(name, workspace) });
+  });
+
+  api.get('/maps/:id', async (req, res) => {
+    const image = await files.mapImage(req.params.id);
+    res.set('X-Content-Type-Options', 'nosniff').type('image/jpeg').send(image);
   });
 
   addStoryRoutes(api, { envFile, anthropicBaseURL, storiesDir: path.join(workspaceDir, 'stories') });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { NotElephantFileError, parseElephant } from '../src/shared/elephant';
+import { NotLogFileError } from '../src/shared/document';
+import { parseElephant } from '../src/shared/elephant';
 import { FIXTURE, FIXTURE_CRLF } from './helpers';
 
 const doc = parseElephant(FIXTURE);
@@ -96,8 +97,8 @@ describe('parseElephant', () => {
   });
 
   it('rejects other addons and broken files', () => {
-    expect(() => parseElephant('OtherDB = {}')).toThrow(NotElephantFileError);
-    expect(() => parseElephant('ElephantDB = { ["profiles"] = {} }')).toThrow(NotElephantFileError);
+    expect(() => parseElephant('OtherDB = {}')).toThrow(NotLogFileError);
+    expect(() => parseElephant('ElephantDB = { ["profiles"] = {} }')).toThrow(NotLogFileError);
     expect(() => parseElephant(FIXTURE.slice(0, 500))).toThrow(/Line \d+/);
   });
 });

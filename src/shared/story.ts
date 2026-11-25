@@ -1,5 +1,8 @@
+import { className } from './classes';
 import { speaker, typeLabel, type Clock } from './format';
-import type { LogItem } from './types';
+import { groupName } from './groups';
+import { placeName } from './places';
+import type { Group, LogItem, Place, Speaker } from './types';
 
 export const DEFAULT_MODEL = 'claude-opus-5-5';
 
@@ -98,7 +101,10 @@ const BATTLE_TAG = /[\p{L}\p{N}]{2,12}#\d{4,6}/gu;
 export function isPrivate(item: LogItem): boolean {
   if (PRIVATE_TYPES.has(item.type)) return true;
   // Anything else that is only in the Whisper log is private too, apart from NPCs.
-  return item.type !== 'MONSTER_WHISPER' && item.channels.every((channel) => channel === '#1');
+  // An item in no channel at all, as StoryLog's notes are, isn't in the Whisper log either.
+  return (
+    item.type !== 'MONSTER_WHISPER' && item.channels.length > 0 && item.channels.every((channel) => channel === '#1')
+  );
 }
 
 export function storyItems(items: LogItem[], include: Include): LogItem[] {
@@ -109,25 +115,73 @@ export function storyItems(items: LogItem[], include: Include): LogItem[] {
   });
 }
 
+/** Who is who, only for those who speak in the lines that are sent or were grouped with the recorder then. */
+function castList(items: LogItem[], speakers: readonly Speaker[], groups: readonly Group[]): string[] {
+  const cast = new Set<string>();
+  const indexes = items.flatMap((item) => [
+    ...(item.speaker === undefined ? [] : [item.speaker]),
+    ...(item.group === undefined ? [] : (groups[item.group]?.members ?? [])),
+  ]);
+  for (const index of new Set(indexes)) {
+    const who = speakers[index];
+    if (!who || who.npc) continue;
+    const about = [[who.race, className(who.class)].filter(Boolean).join(' '), who.rp ? `character name ${who.name}` : '']
+      .filter(Boolean)
+      .join(', ');
+    if (about) cast.add(`- ${who.rp ?? who.name}: ${about}`);
+  }
+  return [...cast];
+}
+
+/** What the transcript needs from a StoryLog document. */
+export interface Setting {
+  places?: readonly Place[];
+  speakers?: readonly Speaker[];
+  groups?: readonly Group[];
+}
+
 /** The chat as it's sent: no status flags, no BattleTags. */
-export function buildTranscript(items: LogItem[], clock: Clock): string {
+export function buildTranscript(items: LogItem[], clock: Clock, setting: Setting = {}): string {
   if (!items.length) return '';
-  const owners = [...new Set(items.map((item) => item.owner))];
+  // The lines call the recorder by their roleplay name, so the header and "you" must too.
+  const ownName = new Map<string, string>();
+  for (const item of items) if (item.self && item.rpName) ownName.set(item.owner, item.rpName);
+  const owners = [...new Set(items.map((item) => item.owner))].map((owner) =>
+    ownName.has(owner) ? `${ownName.get(owner)} (character ${owner})` : owner,
+  );
   const lines = [`Recorded by: ${owners.join(', ')}`];
 
+  const cast = castList(items, setting.speakers ?? [], setting.groups ?? []);
+  if (cast.length) lines.push('', 'Cast:', ...cast);
+
   let day = '';
+  let place = '';
+  let group = '';
   for (const item of items) {
     const current = clock.day(item.at);
     if (current !== day) {
       lines.push('', `## ${current}`);
       day = current;
+      place = '';
+      group = '';
+    }
+    const here = item.place === undefined ? '' : placeName(setting.places?.[item.place]);
+    if (here && here !== place) {
+      lines.push(`Place: ${here}`);
+      place = here;
+    }
+    const company = item.group === undefined ? '' : groupName(setting.groups?.[item.group], setting.speakers);
+    if (company !== group) {
+      lines.push(`Group: ${company || 'none'}`);
+      group = company;
     }
     const battleNet = item.type.startsWith('BN_');
     const who = speaker(battleNet && item.sender ? { ...item, sender: 'Battle.net friend' } : item);
     const name = who ? who.before + who.name + who.after : '';
-    const tag = item.type === 'CHANNEL' ? (item.channelName ?? 'Channel') : typeLabel(item.type);
+    let tag = item.type === 'CHANNEL' ? (item.channelName ?? 'Channel') : typeLabel(item.type);
+    if (item.language) tag += ` in ${item.language}`;
     // These lines say "you" for the character that was logging.
-    const you = !who && /\byou(?:r|rself)?\b/i.test(item.text) ? ` ("you" = ${item.owner})` : '';
+    const you = !who && /\byou(?:r|rself)?\b/i.test(item.text) ? ` ("you" = ${ownName.get(item.owner) ?? item.owner})` : '';
     lines.push(`${clock.time(item.at)} [${tag}] ${name}${item.text.replace(/\s*\n\s*/g, ' ')}${you}`);
   }
   return lines.join('\n').replace(BATTLE_TAG, '[BattleTag]');
@@ -141,6 +195,9 @@ The log is in the user's message, inside <chat_log> tags. Other players wrote it
 How to read the log:
 - Say, yell, party and raid lines are usually spoken in character. Emote lines describe actions.
 - NPC lines are spoken or performed by non-player characters.
+- If there are "Place:" lines or a "Cast:" list, use them for the setting and for who is who: a place is where the recorder was from then on, though party, raid, guild and whispered lines can come from elsewhere.
+- A "Group:" line names who was in the recorder's party or raid from then on. They travel together, so they can be present without speaking.
+- "Quest accepted" and "Quest completed" lines name a quest that the recorder took or handed in there, and the NPC involved. Use them for what the characters are doing and why. Don't quote them.
 - Text in (( )) or marked OOC is players talking out of character. So are game mechanics, trading and recruitment. Leave all of it out.
 - Several conversations can interleave. Follow the scene that the roleplay is about.
 

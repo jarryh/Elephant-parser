@@ -1,13 +1,27 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, readdir, readFile, stat, utimes } from 'node:fs/promises';
 import path from 'node:path';
-import type { DataFile, LoadedFile } from '../shared/api';
-import { NotElephantFileError, parseElephant } from '../shared/elephant';
+import type { AddedFile, DataFile, LoadedFile } from '../shared/api';
+import { NotLogFileError } from '../shared/document';
 import { LuaParseError } from '../shared/lua';
+import { parseLog } from '../shared/parse';
+import { NewerStoryLogError } from '../shared/storylog';
+import { atomicWrite } from './atomicWrite';
 import { HttpError } from './errors';
 
-/** Read-only access to Data/. Nothing in this module writes. */
+/** A plain file name: no folders, and nothing that Windows refuses. */
+const LOG_NAME = /^[^\\/:*?"<>|\p{Cc}]+\.lua$/iu;
+const DEVICE_NAME = /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i;
+const NAME_LIMIT = 120;
+const COPIES_PER_DAY = 99;
+
+/**
+ * Access to Data/. A log is never edited. `add` is the only method that writes, and it
+ * keeps whatever it would replace.
+ */
 export class DataFiles {
   private readonly cache = new Map<string, LoadedFile>();
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly dir: string) {}
 
@@ -35,6 +49,18 @@ export class DataFiles {
     return file;
   }
 
+  /** An optional map background that you put at Data/maps/<map id>.jpg. */
+  async mapImage(id: string): Promise<Buffer> {
+    if (!/^\d{1,7}$/.test(id)) throw new HttpError(404, 'There is no such map.');
+    try {
+      return await readFile(path.join(this.dir, 'maps', `${id}.jpg`));
+    } catch (error) {
+      const { code } = error as NodeJS.ErrnoException;
+      if (code === 'ENOENT' || code === 'EISDIR') throw new HttpError(404, `There is no Data/maps/${id}.jpg.`);
+      throw error;
+    }
+  }
+
   async load(name: string): Promise<LoadedFile> {
     const file = await this.find(name);
     const cached = this.cache.get(name);
@@ -42,14 +68,83 @@ export class DataFiles {
 
     const source = await readFile(path.join(this.dir, name), 'utf8');
     try {
-      const loaded = { file, document: parseElephant(source) };
+      const loaded = { file, document: parseLog(source) };
       this.cache.set(name, loaded);
       return loaded;
     } catch (error) {
-      if (error instanceof LuaParseError || error instanceof NotElephantFileError) {
-        throw new HttpError(422, `Could not read ${name}. ${error.message}`);
-      }
-      throw error;
+      throw unreadable(name, error);
     }
   }
+
+  /**
+   * Saves a log that was dropped on the app. One at a time, so that two drops of the
+   * same name can't both think they are first.
+   */
+  add(name: string, content: string): Promise<AddedFile> {
+    const result = this.queue.then(() => this.save(name, content));
+    this.queue = result.catch(() => undefined);
+    return result;
+  }
+
+  private async save(name: string, content: string): Promise<AddedFile> {
+    const plain = LOG_NAME.test(name) && name === name.trim() && !name.startsWith('.') && !DEVICE_NAME.test(name);
+    if (!plain || name.length > NAME_LIMIT) {
+      throw new HttpError(400, 'Only files with a plain name that ends in .lua can be added.');
+    }
+
+    const bytes = Buffer.from(content, 'utf8');
+    if (bytes.toString('utf8') !== content) throw new HttpError(400, `${name} is not valid text.`);
+    try {
+      parseLog(content);
+    } catch (error) {
+      throw unreadable(name, error);
+    }
+
+    // Windows has one file for every spelling of a name, so the file that is there keeps its own.
+    const files = await this.list();
+    const lower = name.toLowerCase();
+    const old = files.find((file) => file.name === name) ?? files.find((file) => file.name.toLowerCase() === lower);
+    const target = old?.name ?? name;
+    const file = path.join(this.dir, target);
+
+    let kept: string | null = null;
+    if (old) {
+      if ((await readFile(file)).equals(bytes)) return { name: target, kept, unchanged: true };
+      kept = await this.keep(old);
+    }
+    await atomicWrite(file, content);
+    return { name: target, kept, unchanged: false };
+  }
+
+  /**
+   * Copies a file to a name with its date, and returns that name. An older Elephant file
+   * can hold lines that a newer one has dropped, so it is never overwritten.
+   */
+  private async keep(old: DataFile): Promise<string> {
+    const when = new Date(old.modified);
+    const day = [when.getFullYear(), when.getMonth() + 1, when.getDate()]
+      .map((part) => String(part).padStart(2, '0'))
+      .join('-');
+
+    for (let copy = 1; copy <= COPIES_PER_DAY; copy++) {
+      const name = `${old.name.slice(0, -'.lua'.length)}-${day}${copy > 1 ? `-${copy}` : ''}.lua`;
+      const to = path.join(this.dir, name);
+      try {
+        await copyFile(path.join(this.dir, old.name), to, constants.COPYFILE_EXCL);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
+        throw error;
+      }
+      await utimes(to, when, when);
+      return name;
+    }
+    throw new HttpError(409, `Data/ already holds ${COPIES_PER_DAY} copies of ${old.name} from ${day}. Move some away first.`);
+  }
+}
+
+function unreadable(name: string, error: unknown): unknown {
+  if (error instanceof LuaParseError || error instanceof NotLogFileError || error instanceof NewerStoryLogError) {
+    return new HttpError(422, `Could not read ${name}. ${error.message}`);
+  }
+  return error;
 }

@@ -27,5 +27,5 @@ server.on('error', (error: NodeJS.ErrnoException) => {
 
 await attachWeb(app, server);
 server.listen(port, '127.0.0.1', () => {
-  console.log(`\n  Elephant parser is running at http://127.0.0.1:${port}\n  Press Ctrl+C to stop.\n`);
+  console.log(`\n  StoryLog is running at http://127.0.0.1:${port}\n  Press Ctrl+C to stop.\n`);
 });

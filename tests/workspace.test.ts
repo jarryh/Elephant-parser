@@ -28,6 +28,14 @@ describe('workspace API', () => {
     expect(await load()).toEqual({ revision: 1, removed: ['abc'], filters });
   });
 
+  it('reads edits saved before there was a place filter', async () => {
+    await mkdir(path.join(server.dir, 'workspace'));
+    const { places, ...older } = NO_FILTERS;
+    const saved = JSON.stringify({ revision: 3, removed: ['abc'], filters: older });
+    await writeFile(path.join(server.dir, 'workspace', 'Elephant.lua.json'), saved);
+    expect(await load()).toEqual({ revision: 3, removed: ['abc'], filters: { ...older, places } });
+  });
+
   it('refuses to overwrite edits from another tab', async () => {
     await save({ removed: ['first'] });
     expect((await save({ removed: ['second'] })).status).toBe(409);

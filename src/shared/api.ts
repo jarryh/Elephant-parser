@@ -14,6 +14,19 @@ export interface LoadedFile {
   document: LogDocument;
 }
 
+/** The largest log that the browser will send. As JSON it stays under the server's limit. */
+export const MAX_LOG_BYTES = 50 * 1024 * 1024;
+
+/** What became of a file that was dropped on the app. */
+export interface AddedFile {
+  /** Its name in Data/, which is the spelling of the file it replaced, if any. */
+  name: string;
+  /** The dated name under which the file it replaced is kept. */
+  kept: string | null;
+  /** Data/ already held exactly this file, so nothing was written. */
+  unchanged: boolean;
+}
+
 /** `story` is null without an API key in .env. The key itself is never sent. */
 export interface AppConfig {
   story: { model: string } | null;

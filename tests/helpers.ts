@@ -11,11 +11,29 @@ export const FIXTURE = readFileSync(new URL('./fixtures/elephant.lua', import.me
 /** WoW on Windows writes CRLF, so this is what real files look like. */
 export const FIXTURE_CRLF = FIXTURE.replace(/\n/g, '\r\n');
 
+/** An invented evening, as the StoryLog addon saved it in a mocked WoW Forever client. */
+export const STORYLOG = readFileSync(new URL('./fixtures/storylog.lua', import.meta.url), 'utf8').replace(
+  /\r\n/g,
+  '\n',
+);
+
+export const STORYLOG_CRLF = STORYLOG.replace(/\n/g, '\r\n');
+
 /** A value as nested `[key, value]` pairs, for comparing two parsers. */
 export type Plain = string | number | boolean | null | [key: Plain, value: Plain][];
 
 export function toPlain(value: LuaValue): Plain {
   return isTable(value) ? value.fields.map((field) => [field.key, toPlain(field.value)]) : value;
+}
+
+/** A field of a table in that form. Undefined when there is none, or it isn't a table. */
+export function field(table: Plain | undefined, key: string | number): Plain | undefined {
+  return Array.isArray(table) ? table.find(([name]) => name === key)?.[1] : undefined;
+}
+
+/** A field that must be there, several tables deep. */
+export function path(value: Plain, ...keys: (string | number)[]): Plain {
+  return keys.reduce<Plain>((at, key) => field(at, key)!, value);
 }
 
 /** Parses with an independent Lua parser, to check ours against. */

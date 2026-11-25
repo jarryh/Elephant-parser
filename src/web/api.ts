@@ -1,4 +1,4 @@
-import type { AppConfig, DataFile, LoadedFile } from '../shared/api';
+import type { AddedFile, AppConfig, DataFile, LoadedFile } from '../shared/api';
 import type { Workspace } from '../shared/workspace';
 
 export class ApiError extends Error {
@@ -40,6 +40,11 @@ export const api = {
   files: (signal?: AbortSignal) => getJson<DataFile[]>('/api/files', signal),
   load: (name: string, signal?: AbortSignal) => getJson<LoadedFile>(fileUrl(name), signal),
   workspace: (name: string, signal?: AbortSignal) => getJson<Workspace>(`${fileUrl(name)}/workspace`, signal),
+  /** Saves a log to Data/. The text travels as JSON, which is all that the server lets change anything. */
+  async addFile(name: string, content: string): Promise<AddedFile> {
+    const response = await request(fileUrl(name), { method: 'PUT', body: JSON.stringify({ content }) });
+    return (await response.json()) as AddedFile;
+  },
   async saveWorkspace(name: string, workspace: Workspace): Promise<number> {
     const response = await request(`${fileUrl(name)}/workspace`, { method: 'PUT', body: JSON.stringify(workspace) });
     return ((await response.json()) as { revision: number }).revision;

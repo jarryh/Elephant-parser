@@ -13,7 +13,7 @@ import {
   storyItems,
   type StoryOptions,
 } from '../../shared/story';
-import type { LogItem } from '../../shared/types';
+import type { LogDocument, LogItem } from '../../shared/types';
 import { download } from '../download';
 import { countStoryTokens, generateStory } from '../storyApi';
 import { clock } from '../time';
@@ -27,11 +27,12 @@ const dollars = (value: number) => (value < 0.01 ? 'under $0.01' : `$${value.toF
 
 interface Props {
   model: string;
+  doc: LogDocument;
   messages: LogItem[];
   onClose: () => void;
 }
 
-export function StoryDialog({ model, messages, onClose }: Props) {
+export function StoryDialog({ model, doc, messages, onClose }: Props) {
   const [options, setOptions] = useState<StoryOptions>(DEFAULT_OPTIONS);
   const [whispers, setWhispers] = useState(false);
   const [notices, setNotices] = useState(false);
@@ -46,7 +47,7 @@ export function StoryDialog({ model, messages, onClose }: Props) {
   useEffect(() => () => running.current?.abort(), []);
 
   const items = useMemo(() => storyItems(messages, { whispers, notices }), [messages, whispers, notices]);
-  const transcript = useMemo(() => buildTranscript(items, clock), [items]);
+  const transcript = useMemo(() => buildTranscript(items, clock, doc), [items, doc]);
   const prompt = useMemo(() => {
     const { system, user } = buildPrompt(transcript, options);
     return `${system}\n\n${user}`;
@@ -54,9 +55,10 @@ export function StoryDialog({ model, messages, onClose }: Props) {
 
   const characters = useMemo(() => {
     const names = items.flatMap((item) =>
-      item.sender && !/^(?:MONSTER_|BN_|RAID_BOSS_)/.test(item.type) ? [item.sender] : [],
+      item.sender && !/^(?:MONSTER_|BN_|RAID_BOSS_)/.test(item.type) ? [item.rpName ?? item.sender] : [],
     );
-    return [...new Set([...items.map((item) => item.owner), ...names])];
+    const ownNames = new Map(items.flatMap((item) => (item.self && item.rpName ? [[item.owner, item.rpName]] : [])));
+    return [...new Set([...items.map((item) => ownNames.get(item.owner) ?? item.owner), ...names])];
   }, [items]);
 
   const privateCount = useMemo(() => messages.filter(isPrivate).length, [messages]);

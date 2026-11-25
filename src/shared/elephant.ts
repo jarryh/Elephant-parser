@@ -1,41 +1,24 @@
+import {
+  child,
+  DEFAULT_LOG_NAMES,
+  fillSender,
+  lineLookup,
+  listTables,
+  NotLogFileError,
+  stringField,
+} from './document';
 import { hash } from './hash';
-import { getField, isTable, parseLua, type LuaField, type LuaTable } from './lua';
+import { getField, isTable, parseLua, type LuaField, type LuaTable, type LuaValue } from './lua';
 import { stripMarkup } from './markup';
 import type { Entry, ItemKind, LogDocument, LogInfo, LogItem } from './types';
 
-/** The fixed IDs of Elephant's built-in logs (`default_logs` in its Core.lua). */
-export const DEFAULT_LOG_NAMES: ReadonlyMap<number, string> = new Map([
-  [1, 'Whisper'],
-  [2, 'Raid'],
-  [3, 'Party'],
-  [4, 'Say'],
-  [5, 'Yell'],
-  [6, 'Officer'],
-  [7, 'Guild'],
-  [8, 'Loot'],
-  [9, 'System'],
-  [10, 'Achievement'],
-  [11, 'Instance'],
-  [12, 'Pet battle'],
-]);
-
-/** For these types the text is a format string and the sender fills the `%s`. */
-const SENDER_IN_TEXT = new Set(['MONSTER_EMOTE', 'RAID_BOSS_EMOTE', 'ACHIEVEMENT', 'GUILD_ACHIEVEMENT']);
-
-export class NotElephantFileError extends Error {
-  constructor() {
-    super('This is not an Elephant file (no ElephantDB table with chat logs).');
-    this.name = 'NotElephantFileError';
-  }
-}
-
-export function parseElephant(source: string): LogDocument {
-  const db = parseLua(source).get('ElephantDB');
-  if (!isTable(db)) throw new NotElephantFileError();
+export function parseElephant(source: string, globals: Map<string, LuaValue> = parseLua(source)): LogDocument {
+  const db = globals.get('ElephantDB');
+  if (!isTable(db)) throw new NotLogFileError();
   const scopes = (['char', 'factionrealm'] as const)
     .map((name) => ({ name, table: child(db, name) }))
     .filter((scope) => scope.table);
-  if (!scopes.length) throw new NotElephantFileError();
+  if (!scopes.length) throw new NotLogFileError();
 
   const logs: LogInfo[] = [];
   const entries: Entry[] = [];
@@ -83,16 +66,6 @@ export function parseElephant(source: string): LogDocument {
   return { source, logs, entries, items: all };
 }
 
-function child(table: LuaTable, key: LuaField['key']): LuaTable | undefined {
-  const value = getField(table, key)?.value;
-  return isTable(value) ? value : undefined;
-}
-
-function stringField(table: LuaTable, key: string): string | undefined {
-  const value = getField(table, key)?.value;
-  return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
-}
-
 function describeLog(owner: string, key: LuaField['key'], table: LuaTable): LogInfo {
   const numbered = typeof key === 'number';
   const builtIn = numbered ? DEFAULT_LOG_NAMES.get(key) : undefined;
@@ -120,9 +93,7 @@ function describeLog(owner: string, key: LuaField['key'], table: LuaTable): LogI
  * - A spacer is identified by its log and the entry before it.
  */
 function readEntries(log: LogInfo, list: LuaTable): { id: string; field: LuaField; item: LogItem }[] {
-  const fields = list.fields
-    .filter((field): field is LuaField & { value: LuaTable } => isTable(field.value))
-    .sort((a, b) => Number(a.key) - Number(b.key));
+  const fields = listTables(list);
   const times = fields.map((field) => {
     const time = getField(field.value, 'time')?.value;
     return typeof time === 'number' && Number.isFinite(time) ? time : null;
@@ -163,8 +134,7 @@ function readEntries(log: LogInfo, list: LuaTable): { id: string; field: LuaFiel
     occurrences.set(base, occurrence + 1);
     const id = hash(`${base}#${occurrence}`);
 
-    let raw = prat ?? (ellipsis ? '(...)' : arg1);
-    if (!prat && arg2 && SENDER_IN_TEXT.has(type)) raw = raw.replace(/%(?:1\$)?s/g, () => arg2);
+    const raw = prat ?? fillSender(type, ellipsis ? '(...)' : arg1, arg2);
 
     let sender: string | null = arg2 ? stripMarkup(arg2) : null;
     if (type === 'BN_WHISPER' || type === 'BN_WHISPER_INFORM') sender = battleTag ?? 'Battle.net friend';
@@ -222,21 +192,4 @@ function inferEmoteSenders(items: LogItem[]): void {
         ) ?? null;
     }
   }
-}
-
-/** Maps an offset to a 1-based line number, counting CRLF, LF and CR as one break each. */
-function lineLookup(source: string): (offset: number) => number {
-  const starts = [0];
-  for (const found of source.matchAll(/\r\n|\r|\n/g)) starts.push(found.index + found[0].length);
-
-  return (offset) => {
-    let low = 0;
-    let high = starts.length - 1;
-    while (low < high) {
-      const middle = (low + high + 1) >> 1;
-      if (starts[middle]! <= offset) low = middle;
-      else high = middle - 1;
-    }
-    return low + 1;
-  };
 }

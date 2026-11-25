@@ -1,20 +1,22 @@
 /**
- * Checks against your own Data/Elephant.lua. Skipped when there is none.
+ * Checks against your own Data/Elephant.lua and Data/StoryLog.lua. Skipped when there is none.
+ * The StoryLog checks also run on the invented file.
  *
  * The repository is public: compare against what is computed from the file, and never
  * write its names, text or counts into a test. Assert on booleans and numbers, so a
  * failure doesn't print private chat.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { parseElephant } from '../src/shared/elephant';
 import { exportLua } from '../src/shared/export';
 import { NO_FILTERS, RP_TYPES } from '../src/shared/filter';
 import { parseLua } from '../src/shared/lua';
 import { computeSelection } from '../src/shared/selection';
-import { referenceParse, toPlain } from './helpers';
+import { referenceParse, STORYLOG_CRLF, toPlain } from './helpers';
+import { auditStoryLog, type Audit } from './storylogAudit';
 
 const path = fileURLToPath(new URL('../Data/Elephant.lua', import.meta.url));
 const present = existsSync(path);
@@ -88,5 +90,62 @@ describe.skipIf(!present)('the real Data/Elephant.lua', () => {
       const facts = (items: typeof back) => items.map((m) => JSON.stringify([m.owner, m.time, m.type, m.raw])).sort();
       expect(isDeepStrictEqual(facts(back), facts(messages))).toBe(true);
     }
+  });
+});
+
+const dataDir = fileURLToPath(new URL('../Data/', import.meta.url));
+/** The main log, its archive files and dated copies. Only the main log is named when there is none. */
+const found = existsSync(dataDir) ? readdirSync(dataDir).filter((name) => /^StoryLog.*\.lua$/i.test(name)) : [];
+
+/** The same checks on the invented file, so that they are known to work before a real file exists. */
+const storyLogs = [
+  { name: 'the invented StoryLog file, as WoW writes it', present: true, read: () => Buffer.from(STORYLOG_CRLF, 'utf8') },
+  ...(found.length ? found : ['StoryLog.lua']).map((file) => ({
+    name: `the real Data/${file}`,
+    present: found.includes(file),
+    read: () => readFileSync(`${dataDir}${file}`),
+  })),
+];
+
+describe.each(storyLogs)('$name', ({ present, read }) => {
+  let audit: Audit;
+  beforeAll(() => {
+    audit = auditStoryLog(read());
+  });
+
+  it.skipIf(!present)('is valid UTF-8, so nothing is lost on loading', () => {
+    expect(audit.utf8).toBe(true);
+  });
+
+  it.skipIf(!present)('parses to exactly what a reference parser sees', () => {
+    expect(audit.sameAsReference).toBe(true);
+  });
+
+  it.skipIf(!present)('accounts for every line', () => {
+    expect(audit.entries).toBe(audit.lines);
+    expect(audit.items).toBe(audit.lines);
+    expect(audit.types).toBe(audit.typesInFile);
+    expect(audit.owners).toBe(audit.charactersInFile);
+  });
+
+  it.skipIf(!present)('points every entry at whole lines', () => {
+    expect(audit.misplaced).toBe(0);
+  });
+
+  it.skipIf(!present)('dates every line', () => {
+    expect(audit.undated).toBe(0);
+  });
+
+  it.skipIf(!present)('finds every place and speaker that a line refers to', () => {
+    expect(audit.dangling).toBe(0);
+    expect(audit.dropped).toBe(0);
+  });
+
+  it.skipIf(!present)('exports unchanged when everything is kept', () => {
+    expect(audit.unchanged).toBe(true);
+  });
+
+  it.skipIf(!present)('exports valid Lua with exactly the kept messages', () => {
+    expect(audit.badCuts).toBe(0);
   });
 });

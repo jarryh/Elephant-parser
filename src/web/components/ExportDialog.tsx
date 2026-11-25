@@ -10,7 +10,7 @@ const FORMATS = [
   { id: 'txt', label: 'Plain text', mime: 'text/plain' },
   { id: 'md', label: 'Markdown', mime: 'text/markdown' },
   { id: 'json', label: 'JSON', mime: 'application/json' },
-  { id: 'lua', label: 'Elephant Lua', mime: 'text/plain' },
+  { id: 'lua', label: 'Lua', mime: 'text/plain' },
 ] as const;
 
 type Format = (typeof FORMATS)[number];
@@ -31,12 +31,13 @@ export function ExportDialog({ fileName, doc, messages, states, labels, onClose 
   const [copied, setCopied] = useState('');
 
   const content = useMemo(() => {
-    if (format.id === 'txt') return exportText(messages, clock);
-    if (format.id === 'md') return exportMarkdown(messages, clock);
-    if (format.id === 'json') return exportJson(messages, labels);
+    if (format.id === 'txt') return exportText(messages, clock, doc.places, doc);
+    if (format.id === 'md') return exportMarkdown(messages, clock, doc.places, doc);
+    if (format.id === 'json') return exportJson(messages, labels, doc.places, doc);
     return exportLua(doc, states);
   }, [format, doc, messages, states, labels]);
 
+  const addon = doc.format === 'storylog' ? 'StoryLog' : 'Elephant';
   const base = fileName.replace(/\.lua$/i, '');
   const first = messages[0];
   const last = messages.at(-1);
@@ -61,12 +62,17 @@ export function ExportDialog({ fileName, doc, messages, states, labels, onClose 
                 setCopied('');
               }}
             />
-            {option.label}
+            {option.id === 'lua' ? `${addon} ${option.label}` : option.label}
           </label>
         ))}
       </div>
 
-      {format.id === 'lua' ? (
+      {format.id === 'lua' && doc.format === 'storylog' ? (
+        <p className="hint">
+          A valid StoryLog file with only the selected messages and notes. Each session's lists of speakers and places
+          stay whole, so it can still name people and places from lines you left out. Check before you share it.
+        </p>
+      ) : format.id === 'lua' ? (
         <p className="hint">
           A valid Elephant file with only the selected messages. Settings and "Logging started" markers stay. To use it
           in game, quit WoW, back up your original in SavedVariables and save this as Elephant.lua.

@@ -1,0 +1,13 @@
+## Interface: 16001, 120105
+## Title: StoryLog
+## Notes: Records roleplay chat together with the place where it was said.
+## Version: 0.1.0
+## Category-enUS: Roleplay
+## SavedVariables: StoryLogDB
+## SavedVariablesPerCharacter: StoryLogCharDB
+## OptionalDeps: totalRP3
+
+Core.lua
+Location.lua
+Archive.lua
+Commands.lua

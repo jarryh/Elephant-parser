@@ -1,0 +1,2 @@
+-- This add-on holds data only. StoryLog loads it when its log grows past the limit,
+-- and moves older sessions into StoryLogArchive1DB.
