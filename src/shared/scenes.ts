@@ -1,6 +1,7 @@
 /** Splits the roleplay of each character into scenes, and says who was in each. */
 import { RP_TYPES } from './filter';
-import { isNpc } from './format';
+import { isNpc, isQuest } from './format';
+import type { Cast } from './groups';
 import { placeName } from './places';
 import type { LogItem, Place } from './types';
 
@@ -36,6 +37,8 @@ export interface Scene {
   lines: number;
   /** The busiest first. */
   participants: Participant[];
+  /** Group members who were there and said nothing. */
+  present: string[];
   ids: string[];
 }
 
@@ -46,11 +49,11 @@ interface Open {
   /** Where its talk began. */
   anchor?: Place;
   last?: Place;
-  /** NPC lines since the last line from a player. */
+  /** NPC and quest lines since the last line from a player. */
   ambient: LogItem[];
 }
 
-export function computeScenes(items: readonly LogItem[], places: readonly Place[] = []): Scene[] {
+export function computeScenes(items: readonly LogItem[], places: readonly Place[] = [], cast: Cast = {}): Scene[] {
   const open = new Map<string, Open>();
   const all: Open[] = [];
 
@@ -59,9 +62,10 @@ export function computeScenes(items: readonly LogItem[], places: readonly Place[
     if (!note && !(item.kind === 'message' && SCENE_TYPES.has(item.type))) continue;
 
     let scene = open.get(item.owner);
-    // NPCs talk whether or not anyone is roleplaying. So they never start a scene, move it
-    // or keep it going: they only join one that a player's line carries on.
-    if (isNpc(item)) {
+    // NPCs talk whether or not anyone is roleplaying, and quests are taken on the way. So
+    // neither starts a scene, moves it or keeps it going: they only join one that a
+    // player's line carries on.
+    if (isNpc(item) || isQuest(item)) {
       scene?.ambient.push(item);
       continue;
     }
@@ -85,7 +89,7 @@ export function computeScenes(items: readonly LogItem[], places: readonly Place[
 
   // A note on its own isn't a scene.
   return all
-    .map((scene) => describe(scene, places))
+    .map((scene) => describe(scene, places, cast))
     .filter((scene) => scene.participants.some((person) => !person.npc));
 }
 
@@ -105,13 +109,16 @@ function movedAway(from: Place, to: Place): boolean {
   return from.map === undefined && to.map === undefined && from.zone !== to.zone;
 }
 
-function describe({ owner, items, to }: Open, places: readonly Place[]): Scene {
+function describe({ owner, items, to }: Open, places: readonly Place[], { speakers = [], groups = [] }: Cast): Scene {
   const people = new Map<string, Participant>();
+  const spoke = new Set<string>();
+  const members = new Set<number>();
   const placeLines = new Map<string, number>();
   const notes: string[] = [];
   let lines = 0;
 
   for (const item of items) {
+    if (item.group !== undefined) for (const member of groups[item.group]?.members ?? []) members.add(member);
     if (item.kind === 'marker') {
       notes.push(item.text.replace(/^Note: /, ''));
       continue;
@@ -119,7 +126,9 @@ function describe({ owner, items, to }: Open, places: readonly Place[]): Scene {
     lines++;
     const where = item.place === undefined ? '' : placeName(places[item.place]);
     if (where) placeLines.set(where, (placeLines.get(where) ?? 0) + 1);
-    if (!item.sender) continue;
+    // A quest is the recorder's, but taking one is not a line of roleplay.
+    if (!item.sender || isQuest(item)) continue;
+    spoke.add(item.sender);
 
     const npc = isNpc(item);
     const key = `${npc}:${item.sender}`;
@@ -138,6 +147,11 @@ function describe({ owner, items, to }: Open, places: readonly Place[]): Scene {
     name: notes.join(' · '),
     lines,
     participants: [...people.values()].sort((a, b) => b.lines - a.lines),
+    present: [...members]
+      .flatMap((index) => speakers[index] ?? [])
+      .filter((who) => !spoke.has(who.name))
+      .map((who) => who.rp ?? who.name)
+      .sort((a, b) => a.localeCompare(b)),
     ids: items.map((item) => item.id),
   };
 }

@@ -131,8 +131,30 @@ describe('a story from StoryLog', () => {
 
   it('names nobody from lines that are not sent', () => {
     const whisper = story.items.filter((item) => item.type === 'WHISPER' || item.text === 'Dark in here.');
-    expect(send(false, whisper)).not.toMatch(/Cedra|Borin|Stormwind/);
+    expect(send(false, whisper)).not.toMatch(/Cedra|Stormwind/);
     expect(send(true, whisper)).toContain('- Cedra Mock: Gnome Mage');
+  });
+
+  it('says who was in the group, also when they say nothing in what is sent', () => {
+    const alone = story.items.filter((item) => item.text === 'Dark in here.' || item.text === 'A new evening begins.');
+    const text = send(false, alone);
+    expect(text).toContain('- Borin Ironvow: Dwarf Warrior, character name Borin Fixture');
+    expect(text.match(/^Group: .*$/gm)).toEqual(['Group: Party: Borin Ironvow']);
+    // The next evening was spent alone, which needs no line.
+    expect(text).toMatch(/Place: Elwynn Forest[^\n]*\n\d\d:\d\d \[Say\]/);
+  });
+
+  it('says when the group ends on the same day', () => {
+    const [first, second] = story.items.filter((item) => item.type === 'SAY' && item.self);
+    const text = buildTranscript([first!, { ...second!, group: undefined }], clock, story);
+    expect(text.match(/^Group: .*$/gm)).toEqual(['Group: Party: Borin Ironvow', 'Group: none']);
+  });
+
+  it('tells of quests, with their NPC', () => {
+    const text = send(false);
+    expect(text).toContain('[Quest accepted] [A Test of Patience], from Gatekeeper Dummy');
+    expect(text).toContain('[Quest completed] [A Test of Patience]');
+    expect(buildPrompt(text, DEFAULT_OPTIONS).system).toContain('"Quest accepted"');
   });
 
   it('calls the recorder by their roleplay name throughout', () => {

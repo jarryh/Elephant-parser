@@ -31,9 +31,9 @@ export function ExportDialog({ fileName, doc, messages, states, labels, onClose 
   const [copied, setCopied] = useState('');
 
   const content = useMemo(() => {
-    if (format.id === 'txt') return exportText(messages, clock, doc.places);
-    if (format.id === 'md') return exportMarkdown(messages, clock, doc.places);
-    if (format.id === 'json') return exportJson(messages, labels, doc.places);
+    if (format.id === 'txt') return exportText(messages, clock, doc.places, doc);
+    if (format.id === 'md') return exportMarkdown(messages, clock, doc.places, doc);
+    if (format.id === 'json') return exportJson(messages, labels, doc.places, doc);
     return exportLua(doc, states);
   }, [format, doc, messages, states, labels]);
 

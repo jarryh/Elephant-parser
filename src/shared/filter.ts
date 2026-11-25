@@ -44,6 +44,8 @@ export const RP_TYPES = [
   'MONSTER_EMOTE',
   'MONSTER_WHISPER',
   'ROLL',
+  'QUEST_ACCEPTED',
+  'QUEST_TURNED_IN',
 ];
 
 /** Lower-cases and drops accents, so "elowyn" finds "Élowyn". */
@@ -62,7 +64,7 @@ function searchText(item: LogItem): string {
 }
 
 /** StoryLog's own lines. They show without "Show markers", and have no channel, type or sender to filter by. */
-const ANNOTATIONS = new Set(['NOTE', 'HIDDEN']);
+const ANNOTATIONS = new Set(['NOTE', 'HIDDEN', 'GROUP']);
 
 export function createMatcher(filters: Filters, places: readonly Place[] = []): (item: LogItem) => boolean {
   const owners = new Set(filters.owners);

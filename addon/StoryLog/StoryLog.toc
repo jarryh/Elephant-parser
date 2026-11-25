@@ -4,8 +4,10 @@
 ## Version: 0.1.0
 ## Category-enUS: Roleplay
 ## SavedVariables: StoryLogDB
+## SavedVariablesPerCharacter: StoryLogCharDB
 ## OptionalDeps: totalRP3
 
 Core.lua
 Location.lua
+Archive.lua
 Commands.lua

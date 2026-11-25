@@ -12,8 +12,13 @@ local MOVED_ON_MAP = 0.002
 
 local NAME_KEYS = { "map", "zone", "sub", "mini", "inst", "indoors", "neighborhood", "house", "room", "cont" }
 
+-- A raid that is filling up changes many times within seconds. It is saved as one line.
+local GROUP_SETTLES = 10
+
 local lastPlace = {}
 local roster = {}
+-- The group as it was last saved: "" for none, nil before the first look.
+local lastGroup
 
 local function round(value, scale)
 	return math.floor(value * scale + 0.5) / scale
@@ -137,8 +142,51 @@ function ns.memberPlace(guid)
 	if place then return store(guid, place) end
 end
 
+-- Saves who is in the group, when that has changed.
+local function recordGroup(inRaid, units)
+	local settings = ns.db.settings
+	if not ns.session or not settings.recording or not settings.group then return end
+
+	-- How many others the game says there are. During some fights it hides who they are,
+	-- and then nothing is saved: it would look as if they had left.
+	local others = #units
+	if type(IsInGroup) == "function" then
+		others = try(IsInGroup) == true and math.max(0, (finite(try(GetNumGroupMembers)) or 1) - 1) or 0
+	end
+
+	local members = {}
+	for _, unit in ipairs(units) do
+		local name = ns.unitPlayerName(unit.unit)
+		if name then members[#members + 1] = { name = name, guid = unit.guid } end
+	end
+	if #members < others then return end
+	if others == 0 then members = {} end
+	table.sort(members, function(a, b) return a.name < b.name end)
+
+	local parts = {}
+	for i, member in ipairs(members) do parts[i] = member.guid end
+	local key = #members == 0 and "" or (inRaid and "raid:" or "party:") .. table.concat(parts, ",")
+	if key == lastGroup then return end
+	local first = lastGroup == nil
+	lastGroup = key
+	-- Not being in a group needs no line, unless you just left one.
+	if first and key == "" then return end
+
+	local list = {}
+	for i, member in ipairs(members) do list[i] = ns.speakerIndex(member.name, member.guid, false) end
+
+	local messages = ns.session.messages
+	local last = messages[#messages]
+	local time = ns.now()
+	if last and last.e == "GROUP" and time - last.t < GROUP_SETTLES then
+		last.g, last.raid = list, inRaid or nil
+	else
+		ns.add({ t = time, e = "GROUP", g = list, raid = inRaid or nil, p = ns.playerPlace() })
+	end
+end
+
 function ns.updateRoster()
-	local found = {}
+	local found, units = {}, {}
 	local inRaid = try(IsInRaid) == true
 	local count = inRaid and (finite(try(GetNumGroupMembers)) or 0) or 4
 	local prefix = inRaid and "raid" or "party"
@@ -147,9 +195,15 @@ function ns.updateRoster()
 	for i = 1, count do
 		local unit = prefix .. i
 		local guid = filled(try(UnitGUID, unit))
-		if guid and guid ~= own then found[guid] = unit end
+		if guid and guid ~= own then
+			found[guid] = unit
+			units[#units + 1] = { unit = unit, guid = guid }
+		end
 	end
 	roster = found
+
+	local ok, problem = pcall(recordGroup, inRaid, units)
+	if not ok then ns.say("the group could not be recorded: " .. tostring(problem)) end
 end
 
 -- For the status line: how many group members have a position right now.

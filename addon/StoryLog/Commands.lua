@@ -15,6 +15,8 @@ local function help()
 	print("  /storylog on / off")
 	print("  /storylog record <" .. table.concat(ns.CATEGORIES, "|") .. "> on / off")
 	print("  /storylog note <text>  - a note that names the scene")
+	print("  /storylog limit <MB> / off  - the size at which older sessions move to an archive file")
+	print("  /storylog archive  - what the archive files hold")
 	print("  /storylog prune <days>  - delete sessions older than that")
 end
 
@@ -28,7 +30,11 @@ local function status()
 		parts[#parts + 1] = category .. " " .. onOff(settings[category])
 	end
 	print("  " .. table.concat(parts, ", "))
-	print(("  Lines: %d this session, %d saved in all"):format(#ns.session.messages, ns.lineCount()))
+	print(("  Lines: %d this session, %d in the main log"):format(#ns.session.messages, ns.lineCount()))
+	local limit = settings.limit
+	print(("  Size: about %s MB. %s"):format(
+		ns.megabytes(ns.logSize()),
+		limit > 0 and ("Past %s MB, finished sessions move to an archive file."):format(tostring(limit)) or "It is never split."))
 
 	local here = ns.describePlayer()
 	local names = {}
@@ -97,6 +103,51 @@ local function prune(argument)
 	end
 end
 
+local function limit(argument)
+	local size = argument:lower() == "off" and 0 or tonumber(argument)
+	if not size or size ~= size or size < 0 or size > 20 or (size > 0 and size < 1) then
+		say("use /storylog limit <MB> with 1 to 20, or /storylog limit off. It is now "
+			.. (ns.db.settings.limit > 0 and (tostring(ns.db.settings.limit) .. " MB.") or "off."))
+		return
+	end
+	ns.db.settings.limit = size
+	if size == 0 then
+		say("the log is no longer split. It loads in full at every login, however large.")
+	else
+		say(("past about %s MB, finished sessions move to an archive file at login. The log is about %s MB now."):format(
+			tostring(size), ns.megabytes(ns.logSize())))
+	end
+end
+
+local function archive(argument)
+	local state = ns.archiveState()
+	if argument:lower() == "clear" then
+		ns.archiveClear()
+		say("the archive files count as empty again.")
+		return
+	end
+	if argument ~= "" then
+		say("use /storylog archive, or /storylog archive clear after moving the archive files away.")
+		return
+	end
+
+	say("archive files, as last saved:")
+	for volume = 1, ns.ARCHIVE_VOLUMES do
+		local held = state.held[volume]
+		local line = ("  StoryLog_Archive%d.lua: "):format(volume)
+		if held.sessions == 0 then
+			line = line .. "empty"
+		else
+			line = line .. ("%d sessions, %d lines, about %s MB"):format(held.sessions, held.lines, ns.megabytes(held.bytes))
+		end
+		if volume == state.volume then line = line .. " (in use)" end
+		print(line)
+	end
+	if state.pending then
+		print(("  Sessions copied to file %d leave the main log at the next login."):format(state.pending.volume))
+	end
+end
+
 local function record(argument)
 	local category, value = argument:lower():match("^(%a+)%s+(%a+)$")
 	for _, known in ipairs(ns.CATEGORIES) do
@@ -141,6 +192,10 @@ SlashCmdList.STORYLOG = function(input)
 		note(rest)
 	elseif command == "prune" then
 		prune(rest)
+	elseif command == "limit" then
+		limit(rest)
+	elseif command == "archive" then
+		archive(rest)
 	else
 		help()
 	end

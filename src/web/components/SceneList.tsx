@@ -15,6 +15,14 @@ interface Props {
  * Choosing a scene sets the character, the period and the roleplay types, which together
  * select exactly its lines. So everything else works on it as it is.
  */
+/** A raid has dozens of members, and the full list is in the tooltip. */
+const NAMED = 4;
+
+function shortList(names: string[]): string {
+  const more = names.length - NAMED;
+  return names.slice(0, NAMED).join(', ') + (more > 0 ? `, +${more}` : '');
+}
+
 export function SceneList({ scenes, filters, onChange, open }: Props) {
   const { owners, from, to } = filters;
   const chosen = (scene: Scene) =>
@@ -39,7 +47,11 @@ export function SceneList({ scenes, filters, onChange, open }: Props) {
               <button
                 className="scene-choice"
                 aria-pressed={selected}
-                title={[scene.place, people.map((person) => `${person.name}: ${person.lines}`).join('\n')]
+                title={[
+                  scene.place,
+                  people.map((person) => `${person.name}: ${person.lines}`).join('\n'),
+                  scene.present.length ? `Also in the group: ${scene.present.join(', ')}` : '',
+                ]
                   .filter(Boolean)
                   .join('\n')}
                 onClick={() =>
@@ -63,6 +75,7 @@ export function SceneList({ scenes, filters, onChange, open }: Props) {
                 ) : (
                   (scene.name || scene.place) && <span>{people.map((person) => person.name).join(', ')}</span>
                 )}
+                {scene.present.length > 0 && <span className="present">also present: {shortList(scene.present)}</span>}
               </button>
             </li>
           );

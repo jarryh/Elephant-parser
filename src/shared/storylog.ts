@@ -11,10 +11,11 @@ import {
   numberField,
   stringField,
 } from './document';
+import { groupName } from './groups';
 import { hash } from './hash';
 import { isTable, parseLua, type LuaTable, type LuaValue } from './lua';
 import { stripMarkup } from './markup';
-import type { Entry, LogDocument, LogInfo, LogItem, Place, Speaker } from './types';
+import type { Entry, Group, LogDocument, LogInfo, LogItem, Place, Speaker } from './types';
 
 const VERSION = 1;
 
@@ -35,6 +36,12 @@ const LOG_OF = new Map<string, number>(
 );
 const SYSTEM_LOG = 9;
 
+/** Lines that the addon writes about what happened, in no channel. */
+const MARKERS = new Set(['NOTE', 'HIDDEN', 'GROUP']);
+const QUESTS = new Set(['QUEST_ACCEPTED', 'QUEST_TURNED_IN']);
+/** Elephant has no log for quests, so this one has a name and no number. */
+const QUEST_LOG = { channel: 'quests', label: 'Quests' };
+
 /** These channels are one log in every zone. Elephant keys the others by their full name. */
 const ONE_LOG_CHANNELS = new Set([
   'general',
@@ -48,8 +55,12 @@ const ONE_LOG_CHANNELS = new Set([
 
 const NAME_LIMIT = 120;
 
-export function parseStoryLog(source: string, globals: Map<string, LuaValue> = parseLua(source)): LogDocument {
-  const db = globals.get('StoryLogDB');
+export function parseStoryLog(
+  source: string,
+  globals: Map<string, LuaValue> = parseLua(source),
+  variable = 'StoryLogDB',
+): LogDocument {
+  const db = globals.get(variable);
   if (!isTable(db)) throw new NotLogFileError();
   if ((numberField(db, 'version') ?? VERSION) > VERSION) throw new NewerStoryLogError();
 
@@ -58,6 +69,8 @@ export function parseStoryLog(source: string, globals: Map<string, LuaValue> = p
   const items = new Map<string, LogItem>();
   const places: Place[] = [];
   const speakers: Speaker[] = [];
+  const groups: Group[] = [];
+  const groupAt = new Map<string, number>();
   const lineAt = lineLookup(source);
   let gameVersion: number | undefined;
 
@@ -99,6 +112,24 @@ export function parseStoryLog(source: string, globals: Map<string, LuaValue> = p
 
     const occurrences = new Map<string, number>();
 
+    /** The group that a GROUP line names: its index, or undefined for none. */
+    const readGroup = (message: LuaTable): number | undefined => {
+      const list = [...(child(message, 'g')?.fields ?? [])].sort((a, b) => Number(a.key) - Number(b.key));
+      const members = list.flatMap((entry) => speakerAt.get(typeof entry.value === 'number' ? entry.value : 0)?.index ?? []);
+      if (!members.length) return undefined;
+
+      const raid = booleanField(message, 'raid') === true;
+      const key = `${raid}:${members.join()}`;
+      let index = groupAt.get(key);
+      if (index === undefined) {
+        index = groups.push(raid ? { members, raid } : { members }) - 1;
+        groupAt.set(key, index);
+      }
+      return index;
+    };
+    // A session starts in no group, or says at once which one. So nothing carries over.
+    let group: number | undefined;
+
     for (const field of listTables(child(session, 'messages'))) {
       const message: LuaTable = field.value;
       const type = stringField(message, 'e') ?? '';
@@ -106,10 +137,21 @@ export function parseStoryLog(source: string, globals: Map<string, LuaValue> = p
       const body = stringField(message, 'm') ?? '';
       const channelName = stringField(message, 'ch');
       const speaker = speakerAt.get(numberField(message, 's') ?? 0);
-      const marker = time === null || type === 'NOTE' || type === 'HIDDEN';
+      const marker = time === null || MARKERS.has(type);
+      const questId = QUESTS.has(type) ? numberField(message, 'q') : undefined;
+      const quest = questId !== undefined && Number.isSafeInteger(questId) && questId > 0 ? questId : undefined;
 
       // Only what can't change later: not the indexes, and not the roleplay name.
-      const base = JSON.stringify(['sl', sessionId, time, type, speaker?.name, body, channelName]);
+      const base = JSON.stringify([
+        'sl',
+        sessionId,
+        time,
+        type,
+        speaker?.name,
+        body,
+        channelName,
+        ...(quest === undefined ? [] : [quest]),
+      ]);
       const occurrence = occurrences.get(base) ?? 0;
       occurrences.set(base, occurrence + 1);
       const id = hash(`${base}#${occurrence}`);
@@ -130,8 +172,16 @@ export function parseStoryLog(source: string, globals: Map<string, LuaValue> = p
       let sender = who?.name ?? null;
       if (type === 'BN_WHISPER' || type === 'BN_WHISPER_INFORM') sender = 'Battle.net friend';
 
+      const target = speakerAt.get(numberField(message, 'to') ?? 0);
+      const targetName = target && (speakers[target.index]!.rp ?? speakers[target.index]!.name);
+
       let raw = fillSender(type, body, who?.name);
       if (type === 'NOTE') raw = `Note: ${body}`;
+      if (type === 'GROUP') {
+        group = readGroup(message);
+        raw = group === undefined ? 'Left the group' : groupName(groups[group], speakers);
+      }
+      if (QUESTS.has(type)) raw = questText(type, quest, body, targetName);
       if (type === 'HIDDEN') {
         const count = numberField(message, 'n') ?? 1;
         raw = `${count} ${count === 1 ? 'message' : 'messages'} hidden by the game`;
@@ -166,8 +216,9 @@ export function parseStoryLog(source: string, globals: Map<string, LuaValue> = p
       if (who?.rp) item.rpName = who.rp;
       const language = stringField(message, 'lang');
       if (language) item.language = language;
-      const target = speakerAt.get(numberField(message, 'to') ?? 0);
-      if (target) item.target = speakers[target.index]!.rp ?? speakers[target.index]!.name;
+      if (targetName) item.target = targetName;
+      if (group !== undefined) item.group = group;
+      if (quest !== undefined) item.quest = quest;
 
       if (!items.has(id)) items.set(id, item);
     }
@@ -182,6 +233,7 @@ export function parseStoryLog(source: string, globals: Map<string, LuaValue> = p
     format: 'storylog',
     places,
     speakers,
+    groups,
   };
   if (gameVersion !== undefined) document.gameVersion = gameVersion;
   return document;
@@ -194,7 +246,20 @@ export class NewerStoryLogError extends Error {
   }
 }
 
+/**
+ * A quest as the game would link it, which `parseMarkup` turns into a link to Wowhead.
+ * The label in front of the line says whether it was accepted or completed.
+ */
+function questText(type: string, id: number | undefined, title: string, npc: string | undefined): string {
+  // A stray "|" would start an escape code.
+  const name = (cleanName(title) ?? (id === undefined ? 'A quest' : `Quest ${id}`)).replaceAll('|', '||');
+  const link = id === undefined ? name : `|cffffd100|Hquest:${id}|h[${name}]|h|r`;
+  if (!npc) return link;
+  return `${link}, ${type === 'QUEST_ACCEPTED' ? 'from' : 'handed in to'} ${npc.replaceAll('|', '||')}`;
+}
+
 function channelOf(type: string, name: string | undefined): { channel: string; label: string } {
+  if (QUESTS.has(type)) return QUEST_LOG;
   if (type === 'CHANNEL' && name) {
     const base = name.split(' - ')[0]!;
     return ONE_LOG_CHANNELS.has(base.toLowerCase())

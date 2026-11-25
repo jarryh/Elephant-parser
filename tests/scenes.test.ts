@@ -25,6 +25,8 @@ const line = (at: number, place?: number, patch: Partial<LogItem> = {}): LogItem
 /** On one map, the given yards north of each other. */
 const along = (...yards: number[]): Place[] => yards.map((wx) => ({ map: 1, zone: 'Z', wx, wy: 0, cont: 0 }));
 const sizes = (items: LogItem[], places: Place[] = []) => computeScenes(items, places).map((scene) => scene.lines);
+const quest = (at: number, place?: number) =>
+  line(at, place, { type: 'QUEST_ACCEPTED', sender: 'Ann Test', self: true, quest: 7, channels: ['quests'] });
 
 describe('computeScenes', () => {
   it('starts a new scene after a gap', () => {
@@ -98,6 +100,31 @@ describe('computeScenes', () => {
     expect(sizes(items, along(0, 900))).toEqual([3]);
   });
 
+  it('takes a quest in only between lines of roleplay', () => {
+    expect(computeScenes([quest(0), quest(SCENE_GAP)])).toEqual([]);
+    expect(sizes([line(0), quest(SCENE_GAP), line(2 * SCENE_GAP)])).toEqual([1, 1]);
+
+    const [scene] = computeScenes([quest(0), line(10), quest(15), line(20), quest(30)]);
+    expect(scene).toMatchObject({ from: 10, to: 20, lines: 3 });
+    // The recorder took the quest, and said nothing.
+    expect(scene!.participants).toEqual([{ name: 'Bo Test', lines: 2, npc: false }]);
+  });
+
+  it('does not let a quest far away split a talk in party chat', () => {
+    const items = [line(0, 0), quest(1, 1), line(2, 1, { type: 'PARTY' })];
+    expect(sizes(items, along(0, 900))).toEqual([3]);
+  });
+
+  it('names the group members who were there and said nothing', () => {
+    const cast = {
+      speakers: [{ name: 'Bo Test' }, { name: 'Cy Quiet', rp: 'Cyrus the Silent' }, { name: 'Di Late' }],
+      groups: [{ members: [0, 1] }, { members: [0, 1, 2] }],
+    };
+    const items = [line(0, undefined, { group: 0 }), line(5, undefined, { group: 1 }), line(SCENE_GAP * 2)];
+    expect(computeScenes(items, [], cast).map((scene) => scene.present)).toEqual([['Cyrus the Silent', 'Di Late'], []]);
+    expect(computeScenes(items).map((scene) => scene.present)).toEqual([[], []]);
+  });
+
   it('is named by a note, even one written before it begins', () => {
     const note = line(0, undefined, { kind: 'marker', type: 'NOTE', text: 'Note: The duel', sender: null });
     expect(computeScenes([note, line(5)])).toMatchObject([{ id: note.id, name: 'The duel', from: 0, to: 5, lines: 1 }]);
@@ -106,12 +133,12 @@ describe('computeScenes', () => {
 
 describe('scenes of a StoryLog file', () => {
   const doc = parseLog(STORYLOG);
-  const scenes = computeScenes(doc.items, doc.places);
+  const scenes = computeScenes(doc.items, doc.places, doc);
 
   it('split at the dungeon, the evening and the character', () => {
     expect(scenes.map(({ place, lines }) => [place, lines])).toEqual([
-      ['Stormwind City, Cathedral Square', 10],
-      ['The Stockade', 2],
+      ['Stormwind City, Cathedral Square', 11],
+      ['The Stockade', 3],
       ["Elwynn Forest, Goldshire, Lion's Pride Inn", 1],
       ['Dun Morogh', 3],
     ]);
@@ -126,6 +153,13 @@ describe('scenes of a StoryLog file', () => {
       { name: 'Gatekeeper Dummy', lines: 1, npc: true },
       { name: 'Straw Golem', lines: 1, npc: true },
     ]);
+  });
+
+  it('know the party, and that it did not outlast the evening', () => {
+    // Borin spoke in the first two, so nobody was silently present.
+    expect(scenes.map((scene) => scene.present)).toEqual([[], [], [], []]);
+    const quiet = doc.items.filter((item) => item.sender !== 'Borin Fixture');
+    expect(computeScenes(quiet, doc.places, doc).map((scene) => scene.present)).toEqual([['Borin Ironvow'], ['Borin Ironvow'], [], []]);
   });
 
   it('can be selected with the existing character and period filters', () => {

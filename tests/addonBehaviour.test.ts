@@ -3,8 +3,9 @@
  * It shows that the addon's own logic is right. It can't show that the game behaves as
  * simulated: for that the addon has to be tried in game.
  */
+import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { Client, ELOWYN, q } from './addon/client';
+import { Client, ELOWYN, q, type Files } from './addon/client';
 import { STORYLOG } from './helpers';
 
 interface Message {
@@ -12,6 +13,9 @@ interface Message {
   e: string;
   m?: string;
   n?: number;
+  q?: number;
+  g?: number[];
+  raid?: boolean;
   p?: number;
   s?: number;
   sp?: number;
@@ -41,6 +45,7 @@ describe('the test fixture', () => {
     W.infos[C] = { classFile = "MAGE", race = "Gnome", sex = 3, first = "Cedra", second = "Mock" }
     W.rp.player = "Élowyn Moonwhisper"
     W.rp["Borin Fixture"] = "Borin Ironvow"
+    W.quests[90210] = { title = "A Test of Patience" }
   `;
 
   /** An evening in Stormwind with a party member, a stranger, NPCs, and a dungeon at the end. */
@@ -57,6 +62,9 @@ describe('the test fixture', () => {
     W.now = 1898622230; chat("TEXT_EMOTE", { text = "You wave back.", sender = "Élowyn Testwood", guid = E })
     W.now = 1898622240; chat("SAY", { text = "Kor ma dun.", sender = "Cedra Mock", guid = C, lang = "Gnomish" })
     W.now = 1898622250; slash("note The bargain")
+    W.units.npc = { guid = "Creature-0-4444-0-12-90001-0000000001", first = "Gatekeeper Dummy" }
+    W.now = 1898622255; W.quests[90210].inLog = true; fire("QUEST_ACCEPTED", 90210)
+    W.units.npc = nil
     W.now = 1898622260; chat("SYSTEM", { text = "Borin Fixture rolls 57 (1-100)" })
     W.now = 1898622262; chat("SYSTEM", { text = "You are now rested." })
     W.now = 1898622270; chat("MONSTER_YELL", { text = "The test gates open!", sender = "Gatekeeper Dummy", guid = "Creature-0-4444-0-12-90001-0000000001" })
@@ -78,6 +86,7 @@ describe('the test fixture', () => {
     W.now = 1898622600; chat("SAY", { text = "Dark in here.", sender = "Élowyn Testwood", guid = E, lang = "Common" })
     W.now = 1898622660
     for i = 1, 14 do chat("PARTY", { text = newSecret(), sender = newSecret(), guid = newSecret() }) end
+    W.now = 1898622690; fire("QUEST_TURNED_IN", 90210, 500, 120)
     W.now = 1898622700; chat("PARTY", { text = "That was close.", sender = "Borin Fixture", guid = B })
     W.now = 1898622800
   `;
@@ -106,7 +115,10 @@ describe('the test fixture', () => {
       .login()
       .run(OTHER_CHARACTER)
       .logout();
-    // To update the fixture after changing the addon on purpose, write `saved` to it with LF line ends.
+    // After changing the addon on purpose, run the tests once with UPDATE_FIXTURE=1.
+    if (process.env.UPDATE_FIXTURE) {
+      writeFileSync(new URL('./fixtures/storylog.lua', import.meta.url), saved.replace(/\r\n/g, '\n'));
+    }
     expect(saved.replace(/\r\n/g, '\n')).toBe(STORYLOG);
   });
 });
@@ -281,15 +293,19 @@ describe('sessions and settings', () => {
     expect(client.get('StoryLogDB.settings')).toMatchObject({ speech: false, rolls: true, recording: true });
   });
 
-  it('suggest pruning once the file slows down login', () => {
-    const saved = `StoryLogDB = { version = 1, sessions = { { id = "big", started = 1898600000, messages = {} } } }
-      for i = 1, 50000 do StoryLogDB.sessions[1].messages[i] = { t = 1898600000 + i, e = "SAY", m = "x" } end`;
-    expect(new Client({ saved }).login().printed()).toContain('prune 90');
-    expect(new Client().login().printed()).not.toContain('prune');
+  it('give the limit its default, and keep one that was set', () => {
+    expect(new Client().login().get('StoryLogDB.settings.limit')).toBe(3);
+    const saved = 'StoryLogDB = { version = 1, sessions = {}, settings = { limit = 7 } }';
+    expect(new Client({ saved }).login().get('StoryLogDB.settings.limit')).toBe(7);
+    const broken = 'StoryLogDB = { version = 1, sessions = {}, settings = { limit = "lots" } }';
+    expect(new Client({ saved: broken }).login().get('StoryLogDB.settings.limit')).toBe(3);
   });
 
-  it('add no globals but the slash command and the saved variable', () => {
-    expect(new Client().login().get('addedGlobals()')).toEqual(['SLASH_STORYLOG1', 'StoryLogDB']);
+  it('add no globals but the slash command and the saved variables', () => {
+    const client = new Client().login();
+    expect(client.get('addedGlobals()')).toEqual(['SLASH_STORYLOG1', 'StoryLogDB']);
+    client.logout();
+    expect(client.get('addedGlobals()')).toEqual(['SLASH_STORYLOG1', 'StoryLogCharDB', 'StoryLogDB']);
   });
 });
 
@@ -353,5 +369,335 @@ describe('when something goes wrong', () => {
     client.run('slash("record notices on"); chat("SYSTEM", { text = "Ann rolls 5 (1-6)" })');
     expect(session(client).messages).toMatchObject([{ e: 'SYSTEM' }]);
     expect(client.get('NS.failures.count')).toBe(0);
+  });
+});
+
+describe('the group', () => {
+  const B = 'W.units.party1 = { guid = "Player-1-B", first = "Borin", second = "Fixture" }';
+  const C = 'W.units.party2 = { guid = "Player-1-C", first = "Cedra", second = "Mock" }';
+  const ROSTER = 'fire("GROUP_ROSTER_UPDATE")';
+  const groups = (client: Client) => session(client).messages.filter((message) => message.e === 'GROUP');
+  const names = (client: Client, message: Message) => message.g!.map((index) => session(client).speakers[index - 1]!.name);
+
+  it('is saved when you join, with what is known of each member', () => {
+    const client = new Client({ pre: 'TRP = true' }).login();
+    client.run('W.infos["Player-1-B"] = { classFile = "WARRIOR", race = "Dwarf", sex = 2 }; W.rp["Borin Fixture"] = "Borin Ironvow"');
+    client.run(B).run(ROSTER);
+    expect(groups(client)).toEqual([{ t: 1898622000, e: 'GROUP', g: [1], p: 1 }]);
+    expect(session(client).speakers[0]).toMatchObject({ name: 'Borin Fixture', class: 'WARRIOR', race: 'Dwarf', rp: 'Borin Ironvow' });
+  });
+
+  it('is saved at login when you are already in one, and not when you are in none', () => {
+    const client = new Client().run(B).login();
+    expect(groups(client)).toHaveLength(1);
+    expect(groups(new Client().login().run(ROSTER))).toEqual([]);
+  });
+
+  it('is one line while it changes within seconds, and a new line after that', () => {
+    const client = new Client().login().run(B).run(ROSTER);
+    client.run('W.now = W.now + 5').run(C).run(ROSTER);
+    expect(groups(client)).toHaveLength(1);
+    expect(names(client, groups(client)[0]!)).toEqual(['Borin Fixture', 'Cedra Mock']);
+
+    client.run('W.now = W.now + 60; W.units.party1 = nil').run(ROSTER);
+    expect(groups(client).map((message) => names(client, message))).toEqual([['Borin Fixture', 'Cedra Mock'], ['Cedra Mock']]);
+  });
+
+  it('is a new line when something was said in between', () => {
+    const client = new Client().login().run(B).run(ROSTER).run(ME).run(C).run(ROSTER);
+    expect(session(client).messages.map((message) => message.e)).toEqual(['GROUP', 'SAY', 'GROUP']);
+  });
+
+  it('is saved once, however often the game reports it', () => {
+    const client = new Client().login().run(B);
+    client.run(ROSTER).run('W.now = W.now + 60').run(ROSTER).run('fire("PLAYER_ENTERING_WORLD", false, true)');
+    expect(groups(client)).toHaveLength(1);
+  });
+
+  it('says when you leave, and whether it is a raid', () => {
+    const client = new Client().login().run(B).run(ROSTER);
+    client.run('W.now = W.now + 60; W.units.party1 = nil').run(ROSTER);
+    client.run('W.now = W.now + 60; W.raid = true; W.units.raid1 = W.units.player; W.units.raid2 = { guid = "Player-1-C", first = "Cedra", second = "Mock" }');
+    client.run(ROSTER);
+    expect(groups(client).map(({ g, raid }) => [g!.length, raid])).toEqual([[1, undefined], [0, undefined], [1, true]]);
+  });
+
+  it('is not touched while the game hides who is in it', () => {
+    const client = new Client().login().run(B).run(ROSTER);
+    client.run('W.now = W.now + 60; W.allSecret = true').run(ROSTER);
+    client.run('W.allSecret = false').run(ROSTER);
+    expect(groups(client)).toHaveLength(1);
+    // Nor when a member has no name yet.
+    client.run('W.now = W.now + 60; W.units.party2 = { guid = "Player-1-C" }').run(ROSTER);
+    expect(groups(client)).toHaveLength(1);
+  });
+
+  it('follows its own setting, and is no session by itself', () => {
+    const off = new Client().login().run('slash("record group off")').run(B).run(ROSTER);
+    expect(groups(off)).toEqual([]);
+    expect(new Client().login().run(B).run(ROSTER).logout()).not.toContain('["messages"]');
+  });
+});
+
+describe('quests', () => {
+  const GIVER = 'W.units.npc = { guid = "Creature-0-1-0-1-777-0000000001", first = "Quest Giver" }';
+  const quests = (client: Client) => session(client).messages;
+
+  it('are saved when accepted and when handed in, with the NPC and the place', () => {
+    const client = new Client().login();
+    client.run('W.quests[7] = { title = "A Test of Patience", inLog = true }').run(GIVER);
+    client.run('fire("QUEST_ACCEPTED", 7); W.units.npc = nil; W.now = W.now + 60; fire("QUEST_TURNED_IN", 7, 500, 120)');
+    expect(quests(client)).toEqual([
+      { t: 1898622000, e: 'QUEST_ACCEPTED', q: 7, m: 'A Test of Patience', p: 1, s: 1, to: 2 },
+      { t: 1898622060, e: 'QUEST_TURNED_IN', q: 7, m: 'A Test of Patience', p: 1, s: 1 },
+    ]);
+    expect(session(client).speakers).toMatchObject([{ name: 'Élowyn Testwood' }, { name: 'Quest Giver', npc: true, id: 777 }]);
+  });
+
+  it('are found on a client that puts the quest log index first', () => {
+    const client = new Client().login().run('W.quests[7] = { title = "T", inLog = true }; fire("QUEST_ACCEPTED", 3, 7)');
+    expect(quests(client)).toMatchObject([{ q: 7, m: 'T' }]);
+  });
+
+  it('that were in the quest log at login are known when they are handed in', () => {
+    const client = new Client().run('W.quests[5] = { title = "Old", inLog = true }').login();
+    client.run('fire("QUEST_TURNED_IN", 5, 0, 0); fire("QUEST_TURNED_IN", 5, 0, 0)');
+    expect(quests(client)).toMatchObject([{ e: 'QUEST_TURNED_IN', q: 5, m: 'Old' }]);
+  });
+
+  it('that the game keeps hidden are left out', () => {
+    const client = new Client().login();
+    client.run('W.quests[8] = { title = "Tracker", inLog = true, hidden = true }; W.quests[9] = { title = "Area", inLog = true, task = true }');
+    client.run('fire("QUEST_ACCEPTED", 8); fire("QUEST_ACCEPTED", 9); fire("QUEST_TURNED_IN", 8, 0, 0); fire("QUEST_TURNED_IN", 4242, 0, 0)');
+    expect(quests(client)).toEqual([]);
+  });
+
+  it('get a title that arrives late', () => {
+    const client = new Client().login().run('W.quests[7] = { inLog = true }; fire("QUEST_ACCEPTED", 7)');
+    expect(quests(client)[0]!.m).toBeUndefined();
+    client.run('W.quests[7].title = "Late"; runTimers()');
+    expect(quests(client)).toMatchObject([{ q: 7, m: 'Late' }]);
+  });
+
+  it('are all saved, by number, on a client that cannot tell which are hidden', () => {
+    const client = new Client({ pre: 'NO_QUESTLOG = true' }).login();
+    client.run('fire("QUEST_ACCEPTED", 7); fire("QUEST_TURNED_IN", 8, 0, 0)');
+    expect(quests(client)).toMatchObject([{ e: 'QUEST_ACCEPTED', q: 7 }, { e: 'QUEST_TURNED_IN', q: 8 }]);
+    expect(quests(client)[0]!.m).toBeUndefined();
+  });
+
+  it('follow their own setting, and are still known afterwards', () => {
+    const client = new Client().login().run('W.quests[7] = { title = "T", inLog = true }');
+    client.run('slash("record quests off"); fire("QUEST_ACCEPTED", 7)');
+    expect(quests(client)).toEqual([]);
+    client.run('slash("record quests on"); fire("QUEST_TURNED_IN", 7, 0, 0)');
+    expect(quests(client)).toMatchObject([{ e: 'QUEST_TURNED_IN', q: 7 }]);
+  });
+
+  it('keep their number when the rest fails, or is hidden', () => {
+    const client = new Client().login().run('W.quests[7] = { title = "T", inLog = true }');
+    client.run('local place = NS.playerPlace; NS.playerPlace = function() error("no place today") end; fire("QUEST_ACCEPTED", 7); NS.playerPlace = place');
+    expect(quests(client)).toEqual([{ t: 1898622000, e: 'QUEST_ACCEPTED', q: 7 }]);
+    expect(client.get('NS.failures.count')).toBe(1);
+
+    client.run('W.allSecret = true').run(GIVER).run('fire("QUEST_TURNED_IN", 7, 0, 0)');
+    expect(quests(client)[1]).toEqual({ t: 1898622000, e: 'QUEST_TURNED_IN', q: 7, p: 1, s: 1 });
+    // The serializer throws on a hidden value.
+    expect(client.logout()).toContain('QUEST_TURNED_IN');
+  });
+});
+
+describe('archive files', () => {
+  /** A main log of two finished sessions, about 10 KB each, that is split at 5 KB. */
+  const MAIN = String.raw`
+    local function lines(from)
+      local list = {}
+      for i = 1, 100 do list[i] = { t = from + i, e = "SAY", m = ("x"):rep(20) } end
+      return list
+    end
+    StoryLogDB = { version = 1, settings = { limit = 0.005 }, sessions = {
+      { id = "one", character = "Ann Test", started = 1000, messages = lines(1000) },
+      { id = "two", character = "Bo Test", started = 2000, messages = lines(2000) },
+    } }
+  `;
+  const A1 = 'StoryLog_Archive1';
+  const sessionsIn = (text = '') => [...text.matchAll(/^\["id"\] = "([^"]+)",/gm)].map((found) => found[1]!);
+  const everywhere = (files: Files) =>
+    Object.entries(files)
+      .filter(([name]) => name.startsWith('StoryLog'))
+      .flatMap(([, text]) => sessionsIn(text));
+  /** Logs in with these files, says one line, and logs out. */
+  const play = (files: Files, before = '') => {
+    const client = new Client({ files }).run(before).login().run(ME);
+    return { client, printed: client.printed(), files: client.logoutAll() };
+  };
+
+  it('are not loaded while the log is small', () => {
+    const client = new Client({ saved: MAIN.replace('0.005', '3') }).login();
+    expect(client.get(`C_AddOns.IsAddOnLoaded(${q(A1)})`)).toBe(false);
+    expect(client.printed()).toBe('');
+    expect(sessionsIn(client.logout())).toEqual(['one', 'two']);
+  });
+
+  it('take the finished sessions, which leave the main log one login later', () => {
+    const first = play({ StoryLog: MAIN });
+    expect(first.printed).toContain('2 sessions were copied to StoryLog_Archive1.lua');
+    expect(sessionsIn(first.files[A1])).toEqual(['one', 'two']);
+    // Still in the main log, with the session that was just played.
+    expect(sessionsIn(first.files.StoryLog)).toHaveLength(3);
+
+    const second = play(first.files);
+    expect(second.printed).toContain('2 older sessions are now in StoryLog_Archive1.lua');
+    expect(sessionsIn(second.files[A1])).toEqual(['one', 'two']);
+    const left = sessionsIn(second.files.StoryLog);
+    expect(left).toHaveLength(2);
+    expect(left).not.toContain('one');
+
+    // The two short sessions that are left are under the limit.
+    const third = play(second.files);
+    expect(third.printed).toBe('');
+    expect(third.client.get(`C_AddOns.IsAddOnLoaded(${q(A1)})`)).toBe(false);
+    expect(third.files[A1]).toBe(second.files[A1]);
+    for (const { files } of [first, second, third]) expect(everywhere(files)).toEqual(expect.arrayContaining(['one', 'two']));
+  });
+
+  it('hold every line of what they took', () => {
+    const { files } = play(play({ StoryLog: MAIN }).files);
+    expect(files[A1]!.match(/\["m"\] = /g)).toHaveLength(200);
+    expect(files[A1]).toContain('StoryLogArchive1DB = {');
+  });
+
+  it('do not get a session twice when the game never saved the first copy', () => {
+    play({ StoryLog: MAIN });
+    const again = play({ StoryLog: MAIN });
+    expect(sessionsIn(again.files[A1])).toEqual(['one', 'two']);
+
+    const twice = play({ ...again.files, StoryLog: MAIN.replace('0.005', '0.005, group = true') });
+    expect(sessionsIn(twice.files[A1])).toEqual(['one', 'two']);
+  });
+
+  it.each([
+    ['its file was not written', (files: Files) => ({ StoryLog: files.StoryLog! }), ''],
+    ['the game loads it without its file', (files: Files) => files, `W.addons.${A1}.forgets = true`],
+  ])('delete nothing from the main log when %s', (_name, change, before) => {
+    const copied = play({ StoryLog: MAIN }).files;
+    const lost = play(change(copied), before);
+    expect(lost.printed).toContain('StoryLog_Archive1.lua came back with 0 sessions where 2 were saved');
+    expect(lost.printed).toContain('Nothing was deleted');
+    expect(sessionsIn(lost.files.StoryLog)).toEqual(expect.arrayContaining(['one', 'two']));
+    // They were copied again, and leave once that copy is seen.
+    expect(sessionsIn(lost.files[A1])).toEqual(['one', 'two']);
+    const after = play(lost.files);
+    expect(after.printed).toContain('2 older sessions are now in');
+    expect(sessionsIn(after.files.StoryLog)).not.toContain('one');
+  });
+
+  it('keep a session in the main log when the copy has fewer lines', () => {
+    const copied = play({ StoryLog: MAIN }).files;
+    const cut = copied[A1]!.replace(/\{\r\n\["t"\] = 1001,[^}]*\},\r\n/, '');
+    expect(cut).not.toBe(copied[A1]);
+    const after = play({ ...copied, [A1]: cut });
+    expect(sessionsIn(after.files.StoryLog)).toContain('one');
+    expect(sessionsIn(after.files.StoryLog)).not.toContain('two');
+  });
+
+  it.each([
+    ['missing', `W.addons.${A1} = nil`, 'MISSING'],
+    ['disabled', `W.addons.${A1}.disabled = true`, 'DISABLED'],
+  ])('leave everything as it is when the add-on is %s', (_name, before, reason) => {
+    const { printed, files } = play({ StoryLog: MAIN }, before);
+    expect(printed).toContain(`StoryLog_Archive1 can't be used (${reason})`);
+    expect(sessionsIn(files.StoryLog)).toHaveLength(3);
+    expect(files.StoryLog).not.toContain('["pending"]');
+    expect(files[A1]).toBeUndefined();
+  });
+
+  it('are left alone when a newer StoryLog wrote them', () => {
+    const { printed, files } = play({ StoryLog: MAIN, [A1]: 'StoryLogArchive1DB = { version = 2, future = true }' });
+    expect(printed).toContain("can't be used (a newer StoryLog wrote it)");
+    expect(files[A1]).toContain('["version"] = 2');
+    expect(files[A1]).not.toContain('sessions');
+    expect(sessionsIn(files.StoryLog)).toHaveLength(3);
+  });
+
+  it('give way to the next file when one is full', () => {
+    const filled = play(play({ StoryLog: MAIN }).files).files;
+    // Two more sessions come back from an older copy of the log, and the first file can take no more.
+    const more = MAIN.replace('"one"', '"three"').replace('"two"', '"four"');
+    const archive = /\["archive"\] = \{[\s\S]*?\r\n\},\r\n(?=\["sessions"\])/.exec(filled.StoryLog!)![0];
+    const main = `${more}\nStoryLogDB.archive = (function() local ${archive.replace('["archive"]', 'archive').replace(/,\r\n$/, '')} return archive end)()`;
+    const next = play({ ...filled, StoryLog: main }, 'NS.VOLUME_BYTES = 25000');
+    expect(next.printed).toContain('copied to StoryLog_Archive2.lua');
+    expect(sessionsIn(next.files.StoryLog_Archive2)).toEqual(['three', 'four']);
+    expect(sessionsIn(next.files[A1])).toEqual(['one', 'two']);
+    expect(next.client.get('StoryLogDB.archive.volume')).toBe(2);
+  });
+
+  it('say so when all are full, and start again after /storylog archive clear', () => {
+    const tiny = (volume: number) => `StoryLogArchive${volume}DB = { version = 1, sessions = { { id = "old${volume}", messages = {} } } }`;
+    const full: Files = { StoryLog: MAIN };
+    for (let volume = 1; volume <= 5; volume++) full[`StoryLog_Archive${volume}`] = tiny(volume);
+
+    const stuck = play(full, 'NS.VOLUME_BYTES = 1');
+    expect(stuck.printed).toContain('all 5 archive files are full');
+    expect(sessionsIn(stuck.files.StoryLog)).toHaveLength(3);
+    expect(stuck.files.StoryLog).not.toContain('["pending"]');
+    expect(stuck.files[A1]).toContain('old1');
+
+    // The player moved the files away and said so.
+    const cleared = new Client({ files: { StoryLog: stuck.files.StoryLog! } }).login().run('slash("archive clear")').logoutAll();
+    const fresh = play(cleared);
+    expect(fresh.printed).toContain('copied to StoryLog_Archive1.lua');
+  });
+
+  it('are listed by /storylog archive without being loaded', () => {
+    const { files } = play({ StoryLog: MAIN });
+    const client = new Client({ files: { StoryLog: files.StoryLog! } });
+    client.run(`W.addons.${A1}.disabled = true`).login().run('W.printed = {}; slash("archive")');
+    const printed = client.printed();
+    expect(printed).toContain('StoryLog_Archive1.lua: 2 sessions, 200 lines, about 0.0 MB (in use)');
+    expect(printed).toContain('StoryLog_Archive2.lua: empty');
+    expect(printed).toContain('leave the main log at the next login');
+  });
+
+  it('follow /storylog limit', () => {
+    const client = new Client().login();
+    client.run('slash("limit 5")');
+    expect(client.get('StoryLogDB.settings.limit')).toBe(5);
+    for (const wrong of ['limit', 'limit 0.5', 'limit 21', 'limit -1', 'limit lots']) client.run(`slash(${q(wrong)})`);
+    expect(client.get('StoryLogDB.settings.limit')).toBe(5);
+    client.run('slash("limit off")');
+    expect(client.get('StoryLogDB.settings.limit')).toBe(0);
+
+    const off = play({ StoryLog: MAIN.replace('0.005', '0') });
+    expect(off.printed).toBe('');
+    expect(off.files[A1]).toBeUndefined();
+  });
+
+  it('are sized by an estimate that is close to the real file', () => {
+    const chatty = new Client().login();
+    chatty.run('for i = 1, 300 do W.now = W.now + 1; chat("SAY", { text = ("word "):rep(i % 30), sender = "Borin Fixture", guid = "Player-1-B" }) end');
+    const estimate = chatty.get<number>('NS.logSize()');
+    const real = Buffer.byteLength(chatty.logout());
+    expect(estimate / real).toBeGreaterThan(0.75);
+    expect(estimate / real).toBeLessThan(1.25);
+  });
+});
+
+describe('a log that the game did not load', () => {
+  const SAVED_BEFORE = 'StoryLogCharDB = { saved = true }';
+
+  it('is noticed, because the character has saved one before', () => {
+    const client = new Client({ files: { character: SAVED_BEFORE } }).login();
+    expect(client.printed()).toContain('the game did not load your saved log');
+    expect(client.printed()).toContain('StoryLog.lua.bak');
+  });
+
+  it('is not suspected on a first login, or when the log is there', () => {
+    const first = new Client().login();
+    expect(first.printed()).toBe('');
+    const files = first.run(ME).logoutAll();
+    expect(files.character).toContain('["saved"] = true');
+    expect(new Client({ files }).login().printed()).toBe('');
   });
 });

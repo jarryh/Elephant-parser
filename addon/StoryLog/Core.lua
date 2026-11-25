@@ -7,7 +7,8 @@
 local ADDON, ns = ...
 
 local VERSION = 1
-local PRUNE_HINT_AT = 50000
+-- In MB. Past it, finished sessions move to an archive file: see Archive.lua.
+local DEFAULT_LIMIT = 3
 
 local issecret = issecretvalue or function() return false end
 
@@ -47,13 +48,17 @@ local function say(message)
 end
 
 ns.safe, ns.try, ns.filled, ns.finite, ns.say = safe, try, filled, finite, say
+ns.VERSION, ns.DEFAULT_LIMIT = VERSION, DEFAULT_LIMIT
 
 --------------------------------------------------------------------------------
 -- What is recorded
 
-ns.CATEGORIES = { "speech", "rolls", "guild", "channels", "notices" }
+ns.CATEGORIES = { "speech", "rolls", "guild", "channels", "notices", "group", "quests" }
 
-local DEFAULTS = { recording = true, speech = true, rolls = true, guild = true, channels = false, notices = false }
+local DEFAULTS = {
+	recording = true, speech = true, rolls = true, guild = true, channels = false, notices = false,
+	group = true, quests = true,
+}
 
 local EVENTS = {
 	speech = {
@@ -96,6 +101,9 @@ local NO_SPEAKER = {
 
 -- When the recorder says these, their target is probably whom they mean.
 local ADDRESSED = { SAY = true, YELL = true, EMOTE = true, TEXT_EMOTE = true }
+
+-- These are not chat. Only your own quests can be seen.
+local QUEST_EVENTS = { QUEST_ACCEPTED = true, QUEST_TURNED_IN = true }
 
 --------------------------------------------------------------------------------
 -- Names
@@ -336,9 +344,102 @@ local function onChat(chatType, ...)
 	if not ok then failed(problem) end
 end
 
+--------------------------------------------------------------------------------
+-- Quests
+
+-- The quests in the quest log that the player can see. Nil on a client without the
+-- functions to tell, where every quest is recorded.
+local visibleQuests
+
+-- The game also "accepts" and "hands in" hidden quests that only keep track of things,
+-- and tasks that start by walking into an area.
+local function shown(info)
+	return type(info) == "table" and safe(info.isHeader) ~= true and safe(info.isHidden) ~= true and safe(info.isTask) ~= true
+end
+
+local function scanQuests()
+	local log = C_QuestLog
+	if not log or type(log.GetInfo) ~= "function" then return end
+	local count = finite(try(log.GetNumQuestLogEntries))
+	if not count then return end
+
+	visibleQuests = visibleQuests or {}
+	for index = 1, count do
+		local info = try(log.GetInfo, index)
+		local id = shown(info) and finite(safe(info.questID))
+		if id then visibleQuests[id] = true end
+	end
+end
+
+local function acceptedIsShown(id)
+	local log = C_QuestLog
+	local index = log and finite(try(log.GetLogIndexForQuestID, id))
+	if not index then return true end
+	local info = try(log.GetInfo, index)
+	return type(info) ~= "table" or shown(info)
+end
+
+local function questTitle(id)
+	local log = C_QuestLog
+	return log and filled(try(log.GetTitleForQuestID, id)) or nil
+end
+
+-- Adds the title, the place and the quest's NPC. The line is already saved.
+local function describeQuest(message)
+	message.p = ns.playerPlace()
+	message.m = questTitle(message.q)
+	message.s = speakerIndex(me.name, me.guid, false)
+
+	-- "npc" is whoever the quest window belongs to, while it is open.
+	local guid = filled(try(UnitGUID, "npc"))
+	if guid and (guid:find("^Creature%-") or guid:find("^Vehicle%-")) then
+		local name = filled((try(UnitName, "npc")))
+		if name then message.to = speakerIndex(name, guid, true) end
+	end
+end
+
+local function recordQuest(event, first, second)
+	-- Some clients put the quest log index first when a quest is accepted.
+	local id = event == "QUEST_ACCEPTED" and finite(safe(second)) or finite(safe(first))
+	if not id then return end
+
+	if visibleQuests then
+		if event == "QUEST_ACCEPTED" then
+			if not acceptedIsShown(id) then return end
+			visibleQuests[id] = true
+		else
+			if not visibleQuests[id] then return end
+			visibleQuests[id] = nil
+		end
+	end
+
+	local settings = ns.db.settings
+	if not settings.recording or not settings.quests then return end
+
+	local message = { t = now(), e = event, q = id }
+	add(message)
+
+	local ok, problem = pcall(describeQuest, message)
+	if not ok then failed(problem) end
+
+	-- The title of a quest that the game has not loaded yet arrives a moment later.
+	if not message.m and C_Timer then
+		try(C_Timer.After, 1, function()
+			if not message.m then message.m = questTitle(id) end
+		end)
+	end
+end
+
+local function onQuest(event, ...)
+	local ok, problem = pcall(recordQuest, event, ...)
+	if not ok then failed(problem) end
+end
+
 function ns.note(text)
 	add({ t = now(), e = "NOTE", m = text, p = ns.playerPlace() })
 end
+
+ns.add, ns.now, ns.speakerIndex, ns.unitPlayerName = add, now, speakerIndex, unitPlayerName
 
 function ns.lineCount()
 	local count = 0
@@ -378,7 +479,15 @@ end
 
 local function endSession()
 	local session, sessions = ns.session, ns.db.sessions
-	if #session.messages > 0 then
+	-- Being in a group is not worth a session of its own.
+	local said = false
+	for _, message in ipairs(session.messages) do
+		if message.e ~= "GROUP" then
+			said = true
+			break
+		end
+	end
+	if said then
 		session.ended = now()
 		return
 	end
@@ -395,6 +504,8 @@ local frame = CreateFrame("Frame")
 local function loadDatabase()
 	local db = StoryLogDB
 	if type(db) ~= "table" then
+		-- This character has saved a log before, so the game should have given one.
+		ns.lost = type(StoryLogCharDB) == "table" and StoryLogCharDB.saved == true
 		db = {}
 		StoryLogDB = db
 	end
@@ -408,6 +519,7 @@ local function loadDatabase()
 	for key, value in pairs(DEFAULTS) do
 		if type(db.settings[key]) ~= "boolean" then db.settings[key] = value end
 	end
+	if not finite(db.settings.limit) or db.settings.limit < 0 then db.settings.limit = DEFAULT_LIMIT end
 	ns.db = db
 end
 
@@ -418,22 +530,30 @@ local function onLogin()
 	end
 	if not ns.db then return end
 
+	if ns.lost then
+		say("|cffff7070the game did not load your saved log.|r If you did not delete it yourself, copy StoryLog.lua and StoryLog.lua.bak out of SavedVariables now, before you log out or reload.")
+	end
+
+	-- Before the session starts, so that only finished sessions can move.
+	local ok, problem = pcall(ns.archiveAtLogin)
+	if not ok then say("the log could not be split: " .. tostring(problem)) end
+
 	startSession()
 	ns.updateRoster()
+	scanQuests()
 
 	for chatType in pairs(categoryOf) do
 		-- Not every client has every event.
 		pcall(frame.RegisterEvent, frame, "CHAT_MSG_" .. chatType)
+	end
+	for event in pairs(QUEST_EVENTS) do
+		pcall(frame.RegisterEvent, frame, event)
 	end
 	frame:RegisterEvent("GROUP_ROSTER_UPDATE")
 	frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 	frame:RegisterEvent("PLAYER_LOGOUT")
 
 	if not ns.db.settings.recording then say("recording is off. /storylog on starts it.") end
-	local lines = ns.lineCount()
-	if lines >= PRUNE_HINT_AT then
-		say(("%d lines are saved, which slows down login. Copy StoryLog.lua to the app's Data folder, then use /storylog prune 90."):format(lines))
-	end
 end
 
 frame:SetScript("OnEvent", function(_, event, ...)
@@ -443,15 +563,20 @@ frame:SetScript("OnEvent", function(_, event, ...)
 			loadDatabase()
 		end
 	elseif event == "SAVED_VARIABLES_TOO_LARGE" then
-		if (...) == ADDON then
-			say("the saved log is too large to load, and the game won't save this session. Move StoryLog.lua out of SavedVariables.")
+		local name = ...
+		if type(name) == "string" and name:find("^StoryLog") then
+			say(("%s.lua is too large to load, and the game won't save it this session. Move it out of SavedVariables."):format(name))
 		end
 	elseif event == "PLAYER_LOGIN" then
 		onLogin()
 	elseif event == "PLAYER_LOGOUT" then
 		endSession()
+		StoryLogCharDB = { saved = true }
 	elseif event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
 		ns.updateRoster()
+		scanQuests()
+	elseif QUEST_EVENTS[event] then
+		onQuest(event, ...)
 	else
 		onChat(event:sub(10), ...)
 	end

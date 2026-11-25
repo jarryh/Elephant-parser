@@ -20,7 +20,7 @@ const city = mapDots(messages, places, 1453);
 describe('the map', () => {
   it('offers the maps that have lines, the busiest first', () => {
     expect(mapChoices(messages, places)).toEqual([
-      { map: 1453, name: 'Stormwind City', lines: 9 },
+      { map: 1453, name: 'Stormwind City', lines: 10 },
       { map: 1429, name: 'Elwynn Forest', lines: 2 },
     ]);
   });
@@ -40,6 +40,14 @@ describe('the map', () => {
     expect(speakers).not.toContain('Battle.net friend');
     // Cedra said one thing aloud, whispered once and wrote in General once.
     expect(city.filter((dot) => dot.speaker === 'Cedra Mock').flatMap((dot) => dot.items)).toHaveLength(1);
+  });
+
+  it('draws a quest where you stood when you took it', () => {
+    const quest = city.find((dot) => dot.items.some((item) => item.type === 'QUEST_ACCEPTED'))!;
+    expect(quest).toMatchObject({ exact: true, speaker: 'Élowyn Testwood', x: 0.5234 });
+    // Handed in inside a dungeon, where the game gives no position.
+    expect(messages.filter((item) => item.type === 'QUEST_TURNED_IN')).toHaveLength(1);
+    expect(mapDots(messages, places, 1429).flatMap((dot) => dot.items).some((item) => item.quest)).toBe(false);
   });
 
   it('draws party chat only where its speaker is known to be', () => {
@@ -72,7 +80,7 @@ describe('the map', () => {
   });
 
   it('counts every line once', () => {
-    expect(speakerTally(city).reduce((sum, person) => sum + person.lines, 0)).toBe(9);
+    expect(speakerTally(city).reduce((sum, person) => sum + person.lines, 0)).toBe(10);
   });
 
   it('zooms to the dots without leaving the map', () => {

@@ -1,4 +1,5 @@
 import { lineTag, speaker, type Clock } from './format';
+import { groupChanges, memberNames, type Cast } from './groups';
 import type { EntryState } from './selection';
 import { placeName } from './places';
 import type { Entry, LogDocument, LogItem, Place } from './types';
@@ -34,25 +35,39 @@ function byPlace(items: LogItem[], places: readonly Place[]): { place: string; i
   return parts;
 }
 
-export function exportText(items: LogItem[], clock: Clock, places: readonly Place[] = []): string {
+/** `places` and `cast` come from a StoryLog document. The group is named wherever it changes. */
+export function exportText(items: LogItem[], clock: Clock, places: readonly Place[] = [], cast: Cast = {}): string {
+  const change = groupChanges(cast);
+  const line = (item: LogItem) => {
+    const group = change(item);
+    return [...(group === null ? [] : [`[Group] ${group || 'none'}`]), plainLine(item, clock)];
+  };
   const sections = [...byDay(items, clock)].map(([day, list]) =>
     [
       `=== ${day} ===`,
       ...byPlace(list, places).flatMap((part) => [
         ...(part.place ? [`--- ${part.place} ---`] : []),
-        ...part.items.map((item) => plainLine(item, clock)),
+        ...part.items.flatMap(line),
       ]),
     ].join('\n'),
   );
   return `${sections.join('\n\n')}\n`;
 }
 
-export function exportMarkdown(items: LogItem[], clock: Clock, places: readonly Place[] = []): string {
+export function exportMarkdown(
+  items: LogItem[],
+  clock: Clock,
+  places: readonly Place[] = [],
+  cast: Cast = {},
+): string {
+  const change = groupChanges(cast);
   const line = (item: LogItem) => {
     const who = speaker(item);
     const name = who ? `${escapeMarkdown(who.before)}**${escapeMarkdown(who.name)}**${escapeMarkdown(who.after)}` : '';
     const text = escapeMarkdown(item.text).replace(/\r?\n/g, '<br>');
-    return `- \`${clock.time(item.at)}\` *${escapeMarkdown(lineTag(item))}* ${name}${text}`;
+    const group = change(item);
+    const company = group === null ? '' : `- *Group* ${escapeMarkdown(group || 'none')}\n`;
+    return `${company}- \`${clock.time(item.at)}\` *${escapeMarkdown(lineTag(item))}* ${name}${text}`;
   };
   const sections = [...byDay(items, clock)].map(([day, list]) => {
     const parts = byPlace(list, places).map(
@@ -68,7 +83,12 @@ function escapeMarkdown(text: string): string {
   return text.replace(/[\\`*_[\]<>#|~!]/g, '\\$&');
 }
 
-export function exportJson(items: LogItem[], labels: ReadonlyMap<string, string>, places: readonly Place[] = []): string {
+export function exportJson(
+  items: LogItem[],
+  labels: ReadonlyMap<string, string>,
+  places: readonly Place[] = [],
+  { speakers, groups }: Cast = {},
+): string {
   const messages = items.map((item) => ({
     time: new Date(item.at * 1000).toISOString(),
     unixTime: item.at,
@@ -85,6 +105,9 @@ export function exportJson(items: LogItem[], labels: ReadonlyMap<string, string>
     target: item.target,
     place: item.place === undefined ? undefined : places[item.place],
     speakerPlace: item.speakerPlace === undefined ? undefined : places[item.speakerPlace],
+    group: item.group === undefined ? undefined : memberNames(groups?.[item.group], speakers),
+    raid: (item.group !== undefined && groups?.[item.group]?.raid) || undefined,
+    questId: item.quest,
   }));
   return `${JSON.stringify({ messages }, null, 2)}\n`;
 }

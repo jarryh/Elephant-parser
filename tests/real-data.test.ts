@@ -6,7 +6,7 @@
  * write its names, text or counts into a test. Assert on booleans and numbers, so a
  * failure doesn't print private chat.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -93,12 +93,18 @@ describe.skipIf(!present)('the real Data/Elephant.lua', () => {
   });
 });
 
-const storyPath = fileURLToPath(new URL('../Data/StoryLog.lua', import.meta.url));
+const dataDir = fileURLToPath(new URL('../Data/', import.meta.url));
+/** The main log, its archive files and dated copies. Only the main log is named when there is none. */
+const found = existsSync(dataDir) ? readdirSync(dataDir).filter((name) => /^StoryLog.*\.lua$/i.test(name)) : [];
 
 /** The same checks on the invented file, so that they are known to work before a real file exists. */
 const storyLogs = [
   { name: 'the invented StoryLog file, as WoW writes it', present: true, read: () => Buffer.from(STORYLOG_CRLF, 'utf8') },
-  { name: 'the real Data/StoryLog.lua', present: existsSync(storyPath), read: () => readFileSync(storyPath) },
+  ...(found.length ? found : ['StoryLog.lua']).map((file) => ({
+    name: `the real Data/${file}`,
+    present: found.includes(file),
+    read: () => readFileSync(`${dataDir}${file}`),
+  })),
 ];
 
 describe.each(storyLogs)('$name', ({ present, read }) => {

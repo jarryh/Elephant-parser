@@ -162,7 +162,7 @@ export function FilterPanel({ doc, scenes, filters, onChange, onRemove }: Props)
       <div className="preset">
         <button
           onClick={() => set({ types: RP_TYPES })}
-          title="Say, yell, emotes, party, raid and NPC speech"
+          title="Say, yell, emotes, party, raid, NPC speech, dice rolls and quests"
         >
           Roleplay types only
         </button>

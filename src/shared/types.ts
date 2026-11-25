@@ -55,6 +55,13 @@ export interface Place {
   cont?: number;
 }
 
+/** The others in the recorder's party or raid. Only StoryLog records it. */
+export interface Group {
+  /** Indexes into `LogDocument.speakers`. */
+  members: number[];
+  raid?: boolean;
+}
+
 export interface Speaker {
   name: string;
   rp?: string;
@@ -97,8 +104,12 @@ export interface LogItem {
   rpName?: string;
   /** When it isn't the recorder's usual language. */
   language?: string;
-  /** Whom the recorder had targeted while saying it. */
+  /** Whom the recorder had targeted while saying it. For a quest, its NPC. */
   target?: string;
+  /** The group that the recorder was in at the time: an index into `LogDocument.groups`. */
+  group?: number;
+  /** The game's ID of the quest that the line is about. */
+  quest?: number;
 }
 
 export interface LogDocument {
@@ -115,4 +126,5 @@ export interface LogDocument {
   gameVersion?: number;
   places?: Place[];
   speakers?: Speaker[];
+  groups?: Group[];
 }

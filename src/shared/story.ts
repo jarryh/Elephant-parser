@@ -1,7 +1,8 @@
 import { className } from './classes';
 import { speaker, typeLabel, type Clock } from './format';
+import { groupName } from './groups';
 import { placeName } from './places';
-import type { LogItem, Place, Speaker } from './types';
+import type { Group, LogItem, Place, Speaker } from './types';
 
 export const DEFAULT_MODEL = 'claude-opus-5-5';
 
@@ -114,10 +115,14 @@ export function storyItems(items: LogItem[], include: Include): LogItem[] {
   });
 }
 
-/** Who is who, only for the speakers of the lines that are sent. */
-function castList(items: LogItem[], speakers: readonly Speaker[]): string[] {
+/** Who is who, only for those who speak in the lines that are sent or were grouped with the recorder then. */
+function castList(items: LogItem[], speakers: readonly Speaker[], groups: readonly Group[]): string[] {
   const cast = new Set<string>();
-  for (const index of new Set(items.flatMap((item) => item.speaker ?? []))) {
+  const indexes = items.flatMap((item) => [
+    ...(item.speaker === undefined ? [] : [item.speaker]),
+    ...(item.group === undefined ? [] : (groups[item.group]?.members ?? [])),
+  ]);
+  for (const index of new Set(indexes)) {
     const who = speakers[index];
     if (!who || who.npc) continue;
     const about = [[who.race, className(who.class)].filter(Boolean).join(' '), who.rp ? `character name ${who.name}` : '']
@@ -132,6 +137,7 @@ function castList(items: LogItem[], speakers: readonly Speaker[]): string[] {
 export interface Setting {
   places?: readonly Place[];
   speakers?: readonly Speaker[];
+  groups?: readonly Group[];
 }
 
 /** The chat as it's sent: no status flags, no BattleTags. */
@@ -145,22 +151,29 @@ export function buildTranscript(items: LogItem[], clock: Clock, setting: Setting
   );
   const lines = [`Recorded by: ${owners.join(', ')}`];
 
-  const cast = castList(items, setting.speakers ?? []);
+  const cast = castList(items, setting.speakers ?? [], setting.groups ?? []);
   if (cast.length) lines.push('', 'Cast:', ...cast);
 
   let day = '';
   let place = '';
+  let group = '';
   for (const item of items) {
     const current = clock.day(item.at);
     if (current !== day) {
       lines.push('', `## ${current}`);
       day = current;
       place = '';
+      group = '';
     }
     const here = item.place === undefined ? '' : placeName(setting.places?.[item.place]);
     if (here && here !== place) {
       lines.push(`Place: ${here}`);
       place = here;
+    }
+    const company = item.group === undefined ? '' : groupName(setting.groups?.[item.group], setting.speakers);
+    if (company !== group) {
+      lines.push(`Group: ${company || 'none'}`);
+      group = company;
     }
     const battleNet = item.type.startsWith('BN_');
     const who = speaker(battleNet && item.sender ? { ...item, sender: 'Battle.net friend' } : item);
@@ -183,6 +196,8 @@ How to read the log:
 - Say, yell, party and raid lines are usually spoken in character. Emote lines describe actions.
 - NPC lines are spoken or performed by non-player characters.
 - If there are "Place:" lines or a "Cast:" list, use them for the setting and for who is who: a place is where the recorder was from then on, though party, raid, guild and whispered lines can come from elsewhere.
+- A "Group:" line names who was in the recorder's party or raid from then on. They travel together, so they can be present without speaking.
+- "Quest accepted" and "Quest completed" lines name a quest that the recorder took or handed in there, and the NPC involved. Use them for what the characters are doing and why. Don't quote them.
 - Text in (( )) or marked OOC is players talking out of character. So are game mechanics, trading and recruitment. Leave all of it out.
 - Several conversations can interleave. Follow the scene that the roleplay is about.
 

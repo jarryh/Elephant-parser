@@ -27,6 +27,8 @@ export const ELOWYN: Unit = { guid: 'Player-9999-0000000A', first: 'Élowyn', se
 interface Options {
   /** The saved-variables file from an earlier session. */
   saved?: string;
+  /** All the files from an earlier session, as `logoutAll` returns them. `saved` is its `StoryLog`. */
+  files?: Files;
   me?: Unit;
   /** Lua that runs before the client exists, to choose what it has: `TRP = true`, `HOUSING = true`. */
   pre?: string;
@@ -35,10 +37,16 @@ interface Options {
   build?: number;
 }
 
+/** Saved files by add-on name, and `character` for the one that each character has. */
+export type Files = Record<string, string>;
+
 export class Client {
   private readonly L = lauxlib.luaL_newstate();
+  private readonly files: Files;
 
-  constructor({ saved, me = ELOWYN, pre = '', regional = true, build = 16001 }: Options = {}) {
+  constructor({ saved, files = {}, me = ELOWYN, pre = '', regional = true, build = 16001 }: Options = {}) {
+    this.files = files;
+    saved ??= files.StoryLog;
     lualib.luaL_openlibs(this.L);
     this.run(pre, 'pre');
     this.run(MOCK, 'mock.lua');
@@ -51,6 +59,13 @@ export class Client {
       this.run(`assert(load(SOURCE, ${q(`@${name}`)}))("StoryLog", NS)`);
     }
     if (saved) this.run(saved, 'saved');
+    if (files.character) this.run(files.character, 'saved for the character');
+    // The game reads these only when their add-on is loaded.
+    for (const [name, text] of Object.entries(files)) {
+      if (!name.startsWith('StoryLog_')) continue;
+      this.setGlobal('SOURCE', text);
+      this.run(`W.addons[${q(name)}].saved = SOURCE`);
+    }
     this.run('fire("ADDON_LOADED", "StoryLog")');
   }
 
@@ -81,6 +96,12 @@ export class Client {
   logout(): string {
     this.run('fire("PLAYER_LOGOUT")');
     return this.get<string>('serialize("StoryLogDB", StoryLogDB)');
+  }
+
+  /** Logs out, and returns every file as it then is: those the game wrote, and the others untouched. */
+  logoutAll(): Files {
+    this.run('fire("PLAYER_LOGOUT")');
+    return { ...this.files, ...this.get<Files>('savedFiles()') };
   }
 
   private setGlobal(name: string, value: string): void {

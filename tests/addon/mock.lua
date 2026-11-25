@@ -27,7 +27,12 @@ end
 function issecretvalue(value) return value ~= nil and SECRET[value] == true end
 
 -- The state of the world. Tests change it between events.
-W = { regional = true, realm = "Testrealm", now = 1898622000, locale = "enUS", build = 16001, units = {}, infos = {}, rp = {}, printed = {}, maps = {} }
+W = {
+  regional = true, realm = "Testrealm", now = 1898622000, locale = "enUS", build = 16001,
+  units = {}, infos = {}, rp = {}, printed = {}, maps = {}, quests = {}, timers = {}, addons = {},
+}
+-- The archive add-ons are installed, and have saved nothing yet.
+for volume = 1, 5 do W.addons["StoryLog_Archive" .. volume] = {} end
 
 -- With W.allSecret, everything the game is allowed to hide comes back hidden.
 local function out(...)
@@ -82,7 +87,74 @@ function IsIndoors() return out(W.indoors == true) end
 function IsInInstance() return out(W.inst ~= nil, W.inst and "party" or "none") end
 function GetInstanceInfo() return out(W.inst or W.zone, W.inst and "party" or "none", 1, "Normal", 5, 0, false, 34, 5) end
 function IsInRaid() return W.raid == true end
-function GetNumGroupMembers() return W.members or 0 end
+-- You count too, as in the game. Without W.members, it follows the units that exist.
+function GetNumGroupMembers()
+  if W.members then return W.members end
+  local others = 0
+  for i = 1, 40 do
+    if W.units[(W.raid and "raid" or "party") .. i] and W.units[(W.raid and "raid" or "party") .. i] ~= W.units.player then
+      others = others + 1
+    end
+  end
+  return others > 0 and others + 1 or 0
+end
+function IsInGroup() return GetNumGroupMembers() > 0 end
+
+-- The quest log. W.quests[id] = { title =, inLog =, hidden =, task = }
+if not NO_QUESTLOG then
+  local function inLog()
+    local ids = {}
+    for id, quest in pairs(W.quests) do
+      if quest.inLog then ids[#ids + 1] = id end
+    end
+    table.sort(ids)
+    return ids
+  end
+  C_QuestLog = {}
+  function C_QuestLog.GetNumQuestLogEntries() return #inLog(), #inLog() end
+  function C_QuestLog.GetInfo(index)
+    local id = inLog()[index]
+    local quest = id and W.quests[id]
+    if not quest then return nil end
+    return { title = out(quest.title), questID = id, questLogIndex = index, isHeader = false, isBounty = false,
+      isHidden = quest.hidden == true, isTask = quest.task == true }
+  end
+  function C_QuestLog.GetLogIndexForQuestID(id)
+    for index, found in ipairs(inLog()) do
+      if found == id then return index end
+    end
+  end
+  function C_QuestLog.GetTitleForQuestID(id)
+    local quest = W.quests[id]
+    return out(quest and quest.title)
+  end
+end
+
+-- Timers run when a test says that time has passed.
+C_Timer = { After = function(_, callback) W.timers[#W.timers + 1] = callback end }
+function runTimers()
+  local due = W.timers
+  W.timers = {}
+  for _, callback in ipairs(due) do callback() end
+end
+
+-- Load-on-demand add-ons. W.addons[name] = { saved = "the file's text", disabled =, forgets = }
+-- With `forgets`, the game loads the add-on without its saved file, as a beta of this client did.
+C_AddOns = {}
+function C_AddOns.IsAddOnLoaded(name)
+  local addon = W.addons[name]
+  return addon ~= nil and addon.loaded == true
+end
+function C_AddOns.LoadAddOn(name)
+  local addon = W.addons[name]
+  if not addon then return false, "MISSING" end
+  if addon.disabled then return false, "DISABLED" end
+  if not addon.loaded then
+    if addon.saved and not addon.forgets then assert(load(addon.saved, "@" .. name .. ".lua"))() end
+    addon.loaded = true
+  end
+  return true
+end
 function GetPlayerInfoByGUID(guid)
   local info = W.infos[guid]
   if not info then return end
@@ -182,6 +254,19 @@ function serialize(name, value)
   end
   write(name .. " = ", value, "")
   return "\r\n" .. table.concat(lines, "\r\n") .. "\r\n"
+end
+
+-- Every file that the game would write at logout: only those of loaded add-ons.
+function savedFiles()
+  local files = { StoryLog = serialize("StoryLogDB", StoryLogDB) }
+  for name, addon in pairs(W.addons) do
+    if addon.loaded then
+      local variable = name:gsub("_", "") .. "DB"
+      files[name] = _G[variable] == nil and (variable .. " = nil") or serialize(variable, _G[variable])
+    end
+  end
+  if StoryLogCharDB ~= nil then files.character = serialize("StoryLogCharDB", StoryLogCharDB) end
+  return files
 end
 
 -- A value as JSON, for the tests to read. A table with a first element is a list.

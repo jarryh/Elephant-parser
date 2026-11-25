@@ -7,7 +7,7 @@ evening into a story with Claude.
 The app reads the logs of two addons:
 
 - [StoryLog](addon/README.md), this project's own addon, which also saves where each line
-  was said
+  was said, who was in your group and which quests you took
 - [Elephant](https://www.curseforge.com/wow/addons/elephant)
 
 The app never edits a log. Adding a file saves a copy in the `Data` folder, and an older
@@ -41,6 +41,7 @@ You need [Node.js](https://nodejs.org/) 20.9 or newer (20.x, or 22+).
 
 The app saves the file in a `Data` folder in this project. You can also copy files there
 yourself and press **Reload**. Choose between the files with the **File** menu at the top.
+StoryLog's archive files, `StoryLog_Archive1.lua` and so on, open in the same way.
 
 ## Don't lose old logs
 
@@ -60,7 +61,8 @@ can lose an RP evening within a day.
 The left panel filters by period, scene, place, character, channel, message type, sender
 and text.
 All channels form one timeline, and a message that Elephant saved to several logs is
-shown once. **Roleplay types only** keeps speech, emotes, party, raid and NPC lines.
+shown once. **Roleplay types only** keeps speech, emotes, party, raid and NPC lines, dice
+rolls and quests.
 
 ### Scenes and places
 
@@ -71,8 +73,8 @@ A scene is a stretch of one character's roleplay. A new one starts:
 - and when say, yell or an emote happens on another map, or more than 120 yards (twice
   earshot) from where the scene began. Party and raid chat don't move a scene.
 
-NPC lines count in a scene only between players' lines. They don't start one, move it or
-keep it going.
+NPC lines and quests count in a scene only between players' lines. They don't start one,
+move it or keep it going.
 
 Choosing a scene sets the character, the period and the roleplay types, so the chat shows
 exactly its lines, and removing, exporting and Story all work on it. To see whispers or
@@ -83,10 +85,14 @@ With a StoryLog file you also get:
 
 - the place above the lines where it changes, a Place filter, and places in exports
 - roleplay names from Total RP 3
+- a line where your party or raid changes, and under each scene the members who were
+  there and said nothing
+- the quests you accepted and handed in, linked to Wowhead, under the channel **Quests**
 - a **Map** tab. A filled dot is where the speaker stood. A ring is where you stood when
   you heard them. It draws what was said nearby (say, yell, emotes, NPC speech, dice
-  rolls) and party or raid chat from members whose position is known. Guild chat,
-  whispers and channels reach you anywhere, so they are not drawn.
+  rolls) and party or raid chat from members whose position is known. A quest is drawn
+  where you stood when you took it. Guild chat, whispers and channels reach you anywhere,
+  so they are not drawn.
 
 The map has a plain grid. For a background, save a picture of the whole map (3:2) as
 `Data/maps/<map id>.jpg`. The map's ID is shown in its menu.
@@ -156,8 +162,9 @@ model and the app tells you.
   Both send only the text shown under "See exactly what will be sent".
 - Whispers, game notices and status flags are left out of stories by default, and
   BattleTags are always masked. Character names and public chat are sent as they are.
-- With a StoryLog file, stories also get the places, and the roleplay name, race and
-  class of those who speak in the lines that are sent.
+- With a StoryLog file, stories also get the places, your quests, and the roleplay name,
+  race and class of those who speak in the lines that are sent. Members of your party or
+  raid at that time are named too, even if they said nothing.
 - Wowhead links are plain links: Wowhead sees nothing until you click one. Players are
   never looked up there.
 - The API key stays on the server. Only the key in `.env` is used.

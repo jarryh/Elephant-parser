@@ -30,6 +30,9 @@ const TYPES = new Map<string, [label: string, color: string]>([
   ['LOOT', ['Loot', '#38b878']],
   ['MONEY', ['Money', '#c8c860']],
   ['SKILL', ['Skill', '#8f8fff']],
+  ['QUEST_ACCEPTED', ['Quest accepted', '#ffd100']],
+  ['QUEST_TURNED_IN', ['Quest completed', '#ffd100']],
+  ['GROUP', ['Group', '#aab4ff']],
   ['ACHIEVEMENT', ['Achievement', '#f0e040']],
   ['GUILD_ACHIEVEMENT', ['Guild achievement', '#4df05a']],
 ]);
@@ -64,6 +67,8 @@ export function speaker(item: LogItem): { before: string; name: string; after: s
     case 'RAID_BOSS_EMOTE':
     case 'ACHIEVEMENT':
     case 'GUILD_ACHIEVEMENT':
+    case 'QUEST_ACCEPTED':
+    case 'QUEST_TURNED_IN':
       return null;
     case 'EMOTE':
       return { before: '', name, after: ' ' };
@@ -85,6 +90,11 @@ export function speaker(item: LogItem): { before: string; name: string; after: s
 
 export function isNpc(item: LogItem): boolean {
   return /^(?:MONSTER_|RAID_BOSS_)/.test(item.type);
+}
+
+/** A quest that the recorder accepted or handed in. */
+export function isQuest(item: LogItem): boolean {
+  return item.type === 'QUEST_ACCEPTED' || item.type === 'QUEST_TURNED_IN';
 }
 
 export interface Clock {

@@ -219,6 +219,27 @@ describe('a StoryLog file', () => {
     ]);
   });
 
+  it('shows who joined the group, and links a quest to Wowhead', () => {
+    showStory();
+    expect(line('Party: Borin Ironvow').classList).toContain('group-change');
+
+    const accepted = line('from Gatekeeper Dummy');
+    expect(accepted.textContent).toContain('[Quest accepted] [A Test of Patience], from Gatekeeper Dummy');
+    // The NPC is in the text, so it is not shown again as the target.
+    expect(accepted.textContent).not.toContain('→');
+    const link = within(accepted).getByText('[A Test of Patience]');
+    expect(link.getAttribute('href')).toBe('https://www.wowhead.com/forever/quest=90210');
+    expect(screen.getByLabelText(/^Quests/)).toBeTruthy();
+  });
+
+  it('names the group members of a scene who said nothing', () => {
+    const quiet = { ...storyDoc, items: storyDoc.items.filter((item) => item.sender !== 'Borin Fixture') };
+    show({ filters: NO_FILTERS }, null, quiet);
+    const scene = screen.getByRole('button', { name: /^The bargain/ });
+    expect(scene.textContent).toContain('also present: Borin Ironvow');
+    expect(scene.title).toContain('Also in the group: Borin Ironvow');
+  });
+
   it('shows roleplay names, with the character in the tooltip', () => {
     showStory();
     const name = within(line('bows')).getByText('Borin Ironvow');
@@ -231,8 +252,8 @@ describe('a StoryLog file', () => {
     fireEvent.click(scene());
     expect(line('Well met')).toBeDefined();
     expect(line('Dark in here')).toBeUndefined();
-    // Exactly its ten lines and its note: not the whisper or the channel line from the same minutes.
-    expect(lines()).toHaveLength(11);
+    // Exactly its eleven lines and its note: not the whisper or the channel line from the same minutes.
+    expect(lines()).toHaveLength(12);
     expect(line('private secret')).toBeUndefined();
     expect(line('red door')).toBeUndefined();
     expect(scene().textContent).toContain('Borin Ironvow 4');
@@ -289,7 +310,7 @@ describe('a StoryLog file', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Map' }));
     const side = within(document.querySelector<HTMLElement>('.map-side')!);
     const coloured = [...document.querySelectorAll('.map-person[aria-pressed="true"]')].map((person) => person.textContent);
-    expect(coloured).toEqual(['Élowyn Moonwhisper3', 'Borin Ironvow3', 'Cedra Mock1']);
+    expect(coloured).toEqual(['Élowyn Moonwhisper4', 'Borin Ironvow3', 'Cedra Mock1']);
     expect(side.queryByText('Battle.net friend')).toBeNull();
     expect(side.queryByText('Dorn Placeholder')).toBeNull();
   });

@@ -1,6 +1,36 @@
 
 StoryLogDB = {
 ["version"] = 1,
+["archive"] = {
+["held"] = {
+{
+["bytes"] = 0,
+["lines"] = 0,
+["sessions"] = 0,
+},
+{
+["bytes"] = 0,
+["lines"] = 0,
+["sessions"] = 0,
+},
+{
+["bytes"] = 0,
+["lines"] = 0,
+["sessions"] = 0,
+},
+{
+["bytes"] = 0,
+["lines"] = 0,
+["sessions"] = 0,
+},
+{
+["bytes"] = 0,
+["lines"] = 0,
+["sessions"] = 0,
+},
+},
+["volume"] = 1,
+},
 ["sessions"] = {
 {
 ["id"] = "1898622000-Player-9999-0000000A",
@@ -12,19 +42,27 @@ StoryLogDB = {
 ["locale"] = "enUS",
 ["messages"] = {
 {
+["t"] = 1898622000,
+["e"] = "GROUP",
+["g"] = {
+1,
+},
+["p"] = 1,
+},
+{
 ["t"] = 1898622200,
 ["e"] = "SAY",
 ["m"] = "Well met, \"traveller\".",
 ["p"] = 1,
-["s"] = 1,
-["to"] = 2,
+["s"] = 2,
+["to"] = 1,
 },
 {
 ["t"] = 1898622210,
 ["e"] = "EMOTE",
 ["m"] = "bows \\ deeply.",
 ["p"] = 1,
-["s"] = 2,
+["s"] = 1,
 ["sp"] = 2,
 },
 {
@@ -32,7 +70,7 @@ StoryLogDB = {
 ["e"] = "TEXT_EMOTE",
 ["m"] = "Borin Fixture waves at you.",
 ["p"] = 1,
-["s"] = 2,
+["s"] = 1,
 ["sp"] = 2,
 },
 {
@@ -40,8 +78,8 @@ StoryLogDB = {
 ["e"] = "TEXT_EMOTE",
 ["m"] = "You wave back.",
 ["p"] = 1,
-["s"] = 1,
-["to"] = 2,
+["s"] = 2,
+["to"] = 1,
 },
 {
 ["t"] = 1898622240,
@@ -58,11 +96,20 @@ StoryLogDB = {
 ["p"] = 1,
 },
 {
+["t"] = 1898622255,
+["e"] = "QUEST_ACCEPTED",
+["m"] = "A Test of Patience",
+["p"] = 1,
+["q"] = 90210,
+["s"] = 2,
+["to"] = 4,
+},
+{
 ["t"] = 1898622260,
 ["e"] = "ROLL",
 ["m"] = "Borin Fixture rolls 57 (1-100)",
 ["p"] = 1,
-["s"] = 2,
+["s"] = 1,
 ["sp"] = 2,
 },
 {
@@ -97,7 +144,7 @@ StoryLogDB = {
 ["e"] = "SAY",
 ["m"] = "Take |cnIQ2:|Hitem:12345::::::::70:::::|h[Fixture Cloak]|h|r, friend.",
 ["p"] = 3,
-["s"] = 1,
+["s"] = 2,
 },
 {
 ["t"] = 1898622320,
@@ -113,7 +160,7 @@ StoryLogDB = {
 ["e"] = "PARTY_LEADER",
 ["m"] = "I'm waiting in Goldshire.",
 ["p"] = 3,
-["s"] = 2,
+["s"] = 1,
 ["sp"] = 4,
 },
 {
@@ -128,7 +175,7 @@ StoryLogDB = {
 ["e"] = "SAY",
 ["m"] = "Dark in here.",
 ["p"] = 5,
-["s"] = 1,
+["s"] = 2,
 },
 {
 ["t"] = 1898622660,
@@ -137,11 +184,19 @@ StoryLogDB = {
 ["p"] = 5,
 },
 {
+["t"] = 1898622690,
+["e"] = "QUEST_TURNED_IN",
+["m"] = "A Test of Patience",
+["p"] = 5,
+["q"] = 90210,
+["s"] = 2,
+},
+{
 ["t"] = 1898622700,
 ["e"] = "PARTY",
 ["m"] = "That was close.",
 ["p"] = 5,
-["s"] = 2,
+["s"] = 1,
 },
 },
 ["places"] = {
@@ -194,20 +249,20 @@ StoryLogDB = {
 },
 ["speakers"] = {
 {
-["name"] = "Élowyn Testwood",
-["class"] = "PALADIN",
-["guid"] = "Player-9999-0000000A",
-["race"] = "Human",
-["rp"] = "Élowyn Moonwhisper",
-["sex"] = 3,
-},
-{
 ["name"] = "Borin Fixture",
 ["class"] = "WARRIOR",
 ["guid"] = "Player-9999-0000000B",
 ["race"] = "Dwarf",
 ["rp"] = "Borin Ironvow",
 ["sex"] = 2,
+},
+{
+["name"] = "Élowyn Testwood",
+["class"] = "PALADIN",
+["guid"] = "Player-9999-0000000A",
+["race"] = "Human",
+["rp"] = "Élowyn Moonwhisper",
+["sex"] = 3,
 },
 {
 ["name"] = "Cedra Mock",
@@ -322,8 +377,11 @@ StoryLogDB = {
 },
 ["settings"] = {
 ["channels"] = false,
+["group"] = true,
 ["guild"] = true,
+["limit"] = 3,
 ["notices"] = false,
+["quests"] = true,
 ["recording"] = true,
 ["rolls"] = true,
 ["speech"] = true,

@@ -36,6 +36,24 @@ describe('the StoryLog addon', () => {
     expect(toc).toContain('## SavedVariables: StoryLogDB');
   });
 
+  it('comes with the archive add-ons that it fills, which the game loads only on demand', () => {
+    const addons = new URL('../addon/', import.meta.url);
+    const archives = readdirSync(addons).filter((name) => name.startsWith('StoryLog_Archive'));
+    const count = Number(/local VOLUMES = (\d+)/.exec(read('Archive.lua'))![1]);
+    expect(archives).toEqual(Array.from({ length: count }, (_, index) => `StoryLog_Archive${index + 1}`));
+
+    for (const name of archives) {
+      const lines = readFileSync(new URL(`${name}/${name}.toc`, addons), 'utf8').split(/\r?\n/);
+      expect(lines).toContain('## LoadOnDemand: 1');
+      expect(lines).toContain('## Dependencies: StoryLog');
+      // The variable that Archive.lua and the app look for.
+      expect(lines).toContain(`## SavedVariables: ${name.replace('_', '')}DB`);
+      expect(lines).toContain(toc.find((line) => line.startsWith('## Interface:')));
+      const files = lines.filter((line) => line && !line.startsWith('#'));
+      expect(readdirSync(new URL(`${name}/`, addons)).sort()).toEqual([...files, `${name}.toc`].sort());
+    }
+  });
+
   it('makes no stray globals, which other addons would share', () => {
     const assigned = files.flatMap((name) =>
       [...read(name).matchAll(/^\s*([A-Za-z_]\w*) = /gm)]
@@ -45,6 +63,6 @@ describe('the StoryLog addon', () => {
           return globals.some((global) => global.name === variable);
         }),
     );
-    expect(assigned.sort()).toEqual(['SLASH_STORYLOG1', 'StoryLogDB']);
+    expect(assigned.sort()).toEqual(['SLASH_STORYLOG1', 'StoryLogCharDB', 'StoryLogDB']);
   });
 });

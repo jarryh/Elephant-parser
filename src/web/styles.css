@@ -458,6 +458,15 @@ code {
   font-style: italic;
 }
 
+.line.group-change {
+  color: #aab4ff;
+  font-style: normal;
+}
+
+.scene-choice .present {
+  font-style: italic;
+}
+
 .nothing {
   padding: 30px;
   color: var(--muted);

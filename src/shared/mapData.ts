@@ -46,6 +46,9 @@ const NEARBY_TYPES = new Set([
   'MONSTER_YELL',
   'MONSTER_EMOTE',
   'ROLL',
+  // The recorder's own, so they are drawn where the recorder stood.
+  'QUEST_ACCEPTED',
+  'QUEST_TURNED_IN',
 ]);
 /** Heard anywhere, so only the speaker's own position says where they were. */
 const GROUP_TYPES = new Set([

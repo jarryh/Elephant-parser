@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { NotLogFileError } from '../src/shared/document';
 import { parseElephant } from '../src/shared/elephant';
-import { channelLabels } from '../src/shared/filter';
+import { exportLua } from '../src/shared/export';
+import { channelLabels, NO_FILTERS } from '../src/shared/filter';
 import { parseLua } from '../src/shared/lua';
+import { parseMarkup } from '../src/shared/markup';
 import { parseLog } from '../src/shared/parse';
 import { placeDetails, placeKeys, placeName } from '../src/shared/places';
+import { computeSelection } from '../src/shared/selection';
 import { NewerStoryLogError, parseStoryLog } from '../src/shared/storylog';
 import { FIXTURE, referenceParse, STORYLOG, STORYLOG_CRLF, toPlain } from './helpers';
 import { auditStoryLog } from './storylogAudit';
@@ -44,8 +47,9 @@ describe('parseStoryLog', () => {
 
   it('finds every session, message and marker', () => {
     expect([...new Set(doc.logs.map((log) => log.owner))]).toEqual(['Élowyn Testwood', 'Dorn Placeholder']);
-    expect(doc.items.filter((item) => item.kind === 'message')).toHaveLength(20);
+    expect(doc.items.filter((item) => item.kind === 'message')).toHaveLength(22);
     expect(doc.items.filter((item) => item.kind === 'marker').map((item) => item.text)).toEqual([
+      'Party: Borin Ironvow',
       'Note: The bargain',
       '14 messages hidden by the game',
     ]);
@@ -176,6 +180,127 @@ describe('parseStoryLog', () => {
   });
 });
 
+describe('the group', () => {
+  it('is on every line from where it was saved to the end of the session', () => {
+    expect(doc.groups).toEqual([{ members: [0] }]);
+    expect(doc.speakers![0]).toMatchObject({ name: 'Borin Fixture', rp: 'Borin Ironvow' });
+    const [first, second] = [1898622800, 1898714000].map((end, session) =>
+      doc.items.filter((item) => item.owner === 'Élowyn Testwood' && (session ? item.at > 1898622800 : item.at <= end)),
+    );
+    expect(first!.every((item) => item.group === 0)).toBe(true);
+    expect(first).toHaveLength(21);
+    // Nothing carries over to the next login.
+    expect(second!.map((item) => item.group)).toEqual([undefined]);
+  });
+
+  const grouped = (messages: string) =>
+    parseStoryLog(
+      session(`speakers = { { name = "Bo Test" }, { name = "Cy Test", rp = "Cyrus" } }, messages = { ${messages} }`),
+    );
+
+  it.each([
+    ['{ t = 1, e = "GROUP", g = { 1, 2 } }', 'Party: Bo Test, Cyrus', { members: [0, 1] }],
+    ['{ t = 1, e = "GROUP", g = { 2 }, raid = true }', 'Raid (2): Cyrus', { members: [1], raid: true }],
+    // A member that the file does not know is left out.
+    ['{ t = 1, e = "GROUP", g = { 1, 9 } }', 'Party: Bo Test', { members: [0] }],
+  ])('reads %s', (message, text, group) => {
+    const read = grouped(`${message}, { t = 2, e = "SAY", m = "hi", s = 1 }`);
+    expect(read.items.map((item) => [item.kind, item.text, item.group])).toEqual([
+      ['marker', text, 0],
+      ['message', 'hi', 0],
+    ]);
+    expect(read.groups).toEqual([group]);
+  });
+
+  it('ends when you leave, and is one entry when you join the same people again', () => {
+    const read = grouped(
+      '{ t = 1, e = "GROUP", g = { 1 } }, { t = 2, e = "GROUP", g = {} }, { t = 3, e = "SAY", m = "alone", s = 1 },' +
+        ' { t = 4, e = "GROUP", g = { 1 } }',
+    );
+    expect(read.items.map((item) => [item.text, item.group])).toEqual([
+      ['Party: Bo Test', 0],
+      ['Left the group', undefined],
+      ['alone', undefined],
+      ['Party: Bo Test', 0],
+    ]);
+    expect(read.groups).toHaveLength(1);
+  });
+});
+
+describe('quests', () => {
+  const accepted = line('from Gatekeeper Dummy');
+
+  it('are lines of the recorder, linked like a quest in chat', () => {
+    expect(accepted).toMatchObject({
+      kind: 'message',
+      type: 'QUEST_ACCEPTED',
+      channels: ['quests'],
+      quest: 90210,
+      self: true,
+      sender: 'Élowyn Testwood',
+      target: 'Gatekeeper Dummy',
+      text: '[A Test of Patience], from Gatekeeper Dummy',
+    });
+    expect(parseMarkup(accepted.raw)[0]).toEqual({ text: '[A Test of Patience]', color: '#ffd100', link: 'quest=90210' });
+    expect(channelLabels(doc).get('quests')).toBe('Quests');
+  });
+
+  it('say whom they were handed in to, when that is known', () => {
+    expect(doc.items.find((item) => item.type === 'QUEST_TURNED_IN')!.text).toBe('[A Test of Patience]');
+    const read = parseStoryLog(
+      session('speakers = { { name = "Marshal", npc = true } }, messages = { { t = 1, e = "QUEST_TURNED_IN", q = 7, m = "T", to = 1 } }'),
+    );
+    expect(read.items[0]!.text).toBe('[T], handed in to Marshal');
+  });
+
+  it.each([
+    ['{ t = 1, e = "QUEST_ACCEPTED", q = 7 }', '[Quest 7]', 'quest=7'],
+    ['{ t = 1, e = "QUEST_ACCEPTED", q = 7, m = "a|Hitem:1|h[b]|h" }', '[a[b]]', 'quest=7'],
+    ['{ t = 1, e = "QUEST_ACCEPTED", m = "No number" }', 'No number', undefined],
+    ['{ t = 1, e = "QUEST_ACCEPTED", q = -1, m = "Bad number" }', 'Bad number', undefined],
+  ])('survive %s', (message, text, link) => {
+    const [item] = parseStoryLog(session(`messages = { ${message} }`)).items;
+    expect(item!.text).toBe(text);
+    expect(parseMarkup(item!.raw).map((segment) => segment.link)).toEqual([link]);
+  });
+
+  it('keep the IDs of all other lines as they were', () => {
+    // As the reader gave it before quests existed: saved edits are stored by these IDs.
+    const before = parseStoryLog(session('messages = { { t = 5, e = "SAY", m = "hi" } }')).items[0]!.id;
+    expect(before).toBe('oia7iitonp');
+  });
+});
+
+describe('archive files', () => {
+  const archive = STORYLOG.replace('StoryLogDB = {', 'StoryLogArchive2DB = {');
+
+  it('read like the main log, with the same item IDs', () => {
+    const read = parseLog(archive);
+    expect(read.format).toBe('storylog');
+    expect(read.items.map((item) => item.id)).toEqual(doc.items.map((item) => item.id));
+  });
+
+  it('keep their own name when they are exported', () => {
+    const read = parseLog(archive);
+    const { states } = computeSelection(read, { ...NO_FILTERS, channels: ['#4'] }, new Set());
+    expect(exportLua(read, states)).toMatch(/^\s*StoryLogArchive2DB = \{/);
+  });
+
+  it.each(['StoryLogCharDB = { saved = true }', 'StoryLogArchiveDB = {}', 'StoryLogArchive1DBx = {}'])(
+    'are not seen in %s',
+    (source) => {
+      expect(() => parseLog(source)).toThrow(NotLogFileError);
+    },
+  );
+
+  it('ignore the bookkeeping of the split', () => {
+    const read = parseLog(
+      'StoryLogDB = { version = 1, archive = { volume = 2, held = { { sessions = 1 } }, pending = { volume = 2, ids = { x = 3 } } }, sessions = {} }',
+    );
+    expect(read.items).toEqual([]);
+  });
+});
+
 describe('places', () => {
   it('count for their zone and for themselves', () => {
     expect(placeKeys(placeOf('Well met'))).toEqual(['Stormwind City', 'Stormwind City › Cathedral Square']);
@@ -251,11 +376,11 @@ describe('the checks for a real file', () => {
       ...clean,
       utf8: true,
       sameAsReference: true,
-      lines: 22,
-      entries: 22,
-      items: 22,
-      typesInFile: 14,
-      types: 14,
+      lines: 25,
+      entries: 25,
+      items: 25,
+      typesInFile: 17,
+      types: 17,
       charactersInFile: 2,
       owners: 2,
       unchanged: true,

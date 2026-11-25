@@ -61,7 +61,7 @@ export function Workbench({ loaded, initial, picker, notes, loadError, story }: 
   }, [matched, removed, removedView]);
 
   const labels = useMemo(() => channelLabels(doc), [doc]);
-  const scenes = useMemo(() => computeScenes(doc.items, doc.places), [doc]);
+  const scenes = useMemo(() => computeScenes(doc.items, doc.places, doc), [doc]);
   const game = useMemo(() => gameOf(doc), [doc]);
   const allMessages = useMemo(() => doc.items.filter((item) => item.kind === 'message'), [doc]);
   const removedCount = useMemo(

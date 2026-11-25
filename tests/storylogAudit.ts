@@ -8,7 +8,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { exportLua } from '../src/shared/export';
 import { NO_FILTERS, RP_TYPES, type Filters } from '../src/shared/filter';
-import { parseLua } from '../src/shared/lua';
+import { parseLua, type LuaValue } from '../src/shared/lua';
 import { parseLog } from '../src/shared/parse';
 import { placeKeys } from '../src/shared/places';
 import { computeSelection } from '../src/shared/selection';
@@ -96,7 +96,7 @@ export function auditStoryLog(bytes: Buffer): Audit {
 
   return {
     utf8: Buffer.from(source, 'utf8').equals(bytes),
-    sameAsReference: isDeepStrictEqual(toPlain(parseLua(source).get('StoryLogDB')!), reference),
+    sameAsReference: isDeepStrictEqual(toPlain(onlyTable(source)), reference),
     lines,
     entries: doc.entries.length,
     items: doc.items.length,
@@ -113,6 +113,11 @@ export function auditStoryLog(bytes: Buffer): Audit {
     unchanged: exportLua(doc, computeSelection(doc, NO_FILTERS, new Set()).states) === source,
     badCuts: cuts(doc).filter((cut) => !survives(doc, cut)).length,
   };
+}
+
+/** The file's one variable: StoryLogDB, or StoryLogArchive1DB in an archive file. */
+function onlyTable(source: string): LuaValue {
+  return [...parseLua(source).values()][0]!;
 }
 
 interface Cut {
@@ -139,7 +144,7 @@ function survives(doc: LogDocument, { filters, removed }: Cut): boolean {
   try {
     const { messages, states } = computeSelection(doc, filters, new Set(removed));
     const lua = exportLua(doc, states);
-    if (!isDeepStrictEqual(toPlain(parseLua(lua).get('StoryLogDB')!), referenceParse(lua))) return false;
+    if (!isDeepStrictEqual(toPlain(onlyTable(lua)), referenceParse(lua))) return false;
 
     const back = parseLog(lua);
     const kept = back.items.filter((item) => item.kind === 'message');

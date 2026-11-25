@@ -187,6 +187,28 @@ describe('StoryLog exports', () => {
     expect(exportMarkdown(messages, clock, story.places)).toContain('\n\n### The Stockade\n\n- `');
   });
 
+  it('name the group where it changes', () => {
+    const { messages } = cleaned({}, [], story);
+    const text = exportText(messages, clock, story.places, story);
+    expect(text.match(/^\[Group\] .*$/gm)).toEqual(['[Group] Party: Borin Ironvow', '[Group] none']);
+    expect(text.indexOf('[Group] Party')).toBeLessThan(text.indexOf('Well met'));
+    expect(text).toContain('[Quest accepted] [A Test of Patience], from Gatekeeper Dummy');
+    expect(exportMarkdown(messages, clock, story.places, story)).toContain('- *Group* Party: Borin Ironvow\n- `');
+    expect(exportText(messages, clock, story.places)).not.toContain('[Group]');
+  });
+
+  it('put the group and the quest in the JSON', () => {
+    const { messages } = cleaned({}, [], story);
+    const rows = JSON.parse(exportJson(messages, channelLabels(story), story.places, story)).messages;
+    expect(rows[0]).toMatchObject({ group: ['Borin Ironvow'] });
+    expect(rows.find((row: { type: string }) => row.type === 'QUEST_ACCEPTED')).toMatchObject({
+      questId: 90210,
+      channels: ['Quests'],
+      target: 'Gatekeeper Dummy',
+    });
+    expect(rows.at(-1)).not.toHaveProperty('group');
+  });
+
   it('put places in the JSON', () => {
     const { messages } = cleaned({}, [], story);
     const rows = JSON.parse(exportJson(messages, channelLabels(story), story.places)).messages;

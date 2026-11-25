@@ -1,5 +1,5 @@
 import { memo, type MouseEvent } from 'react';
-import { lineTag, speaker, typeColor } from '../../shared/format';
+import { isQuest, lineTag, speaker, typeColor } from '../../shared/format';
 import { parseMarkup } from '../../shared/markup';
 import { placeDetails, placeName } from '../../shared/places';
 import type { LogItem, Place } from '../../shared/types';
@@ -39,7 +39,9 @@ export const ChatLine = memo(function ChatLine({ item, place, game, showOwner, r
 
   return (
     <div
-      className={['line', marker && 'marker', item.type === 'NOTE' && 'note', removed && 'removed'].filter(Boolean).join(' ')}
+      className={['line', marker && 'marker', item.type === 'NOTE' && 'note', item.type === 'GROUP' && 'group-change', removed && 'removed']
+        .filter(Boolean)
+        .join(' ')}
       data-id={item.id}
       tabIndex={0}
       style={{ color: marker ? undefined : typeColor(item.type) }}
@@ -107,7 +109,8 @@ export const ChatLine = memo(function ChatLine({ item, place, game, showOwner, r
             </span>
           ),
         )}
-        {item.target && (
+        {/* A quest names its NPC in the text. */}
+        {item.target && !isQuest(item) && (
           <span className="target" title="Your target when you said it">
             {' '}
             → {item.target}
