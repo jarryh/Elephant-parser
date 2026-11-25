@@ -221,3 +221,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Elephant-parser: private WoW chat logs (SavedVariables) and local secrets
+Data/
+.env
+
+# Node
+node_modules/
+*.tsbuildinfo
+
+# Your edits and generated stories (contain private chat)
+/workspace/
