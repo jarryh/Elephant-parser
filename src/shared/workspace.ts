@@ -39,6 +39,7 @@ export function parseWorkspace(value: unknown): Workspace | null {
       channels: list('channels'),
       types: list('types'),
       senders: list('senders'),
+      places: list('places'),
       text: typeof filters.text === 'string' ? filters.text : NO_FILTERS.text,
       from: time('from'),
       to: time('to'),

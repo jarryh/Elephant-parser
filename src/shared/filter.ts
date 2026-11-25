@@ -1,4 +1,5 @@
-import type { LogDocument, LogItem } from './types';
+import { placeKeys } from './places';
+import type { LogDocument, LogItem, Place } from './types';
 
 /** An empty list means "all". */
 export interface Filters {
@@ -6,6 +7,8 @@ export interface Filters {
   channels: string[];
   types: string[];
   senders: string[];
+  /** Zones, and places within them: see `placeKeys`. */
+  places: string[];
   text: string;
   /** Unix seconds, inclusive. */
   from: number | null;
@@ -18,6 +21,7 @@ export const NO_FILTERS: Filters = {
   channels: [],
   types: [],
   senders: [],
+  places: [],
   text: '',
   from: null,
   to: null,
@@ -39,6 +43,7 @@ export const RP_TYPES = [
   'MONSTER_YELL',
   'MONSTER_EMOTE',
   'MONSTER_WHISPER',
+  'ROLL',
 ];
 
 /** Lower-cases and drops accents, so "elowyn" finds "Élowyn". */
@@ -50,25 +55,36 @@ const searchable = new WeakMap<LogItem, string>();
 function searchText(item: LogItem): string {
   let value = searchable.get(item);
   if (value === undefined) {
-    value = fold(`${item.sender ?? ''} ${item.text}`);
+    value = fold([item.sender ?? '', ...(item.rpName ? [item.rpName] : []), item.text].join(' '));
     searchable.set(item, value);
   }
   return value;
 }
 
-export function createMatcher(filters: Filters): (item: LogItem) => boolean {
+/** StoryLog's own lines. They show without "Show markers", and have no channel, type or sender to filter by. */
+const ANNOTATIONS = new Set(['NOTE', 'HIDDEN']);
+
+export function createMatcher(filters: Filters, places: readonly Place[] = []): (item: LogItem) => boolean {
   const owners = new Set(filters.owners);
   const channels = new Set(filters.channels);
   const types = new Set(filters.types);
   const senders = new Set(filters.senders);
   const text = fold(filters.text.trim());
   const { from, to, showMarkers } = filters;
+  const wantedPlaces = new Set(filters.places);
+  const inPlace = wantedPlaces.size
+    ? places.map((place) => placeKeys(place).some((key) => wantedPlaces.has(key)))
+    : null;
 
   return (item) => {
-    if (item.kind === 'spacer' || (item.kind === 'marker' && !showMarkers)) return false;
+    if (item.kind === 'spacer') return false;
+    const annotation = item.kind === 'marker' && ANNOTATIONS.has(item.type);
+    if (item.kind === 'marker' && !annotation && !showMarkers) return false;
     if (from !== null && item.at < from) return false;
     if (to !== null && item.at > to) return false;
     if (owners.size && !owners.has(item.owner)) return false;
+    if (inPlace && (item.place === undefined || !inPlace[item.place])) return false;
+    if (annotation) return !text || searchText(item).includes(text);
     if (channels.size && !item.channels.some((channel) => channels.has(channel))) return false;
     if (types.size && !types.has(item.type)) return false;
     if (senders.size && (item.sender === null || !senders.has(item.sender))) return false;
@@ -81,6 +97,7 @@ export interface Facets {
   channels: Map<string, number>;
   types: Map<string, number>;
   senders: Map<string, number>;
+  places: Map<string, number>;
   days: Map<string, number>;
 }
 
@@ -98,10 +115,12 @@ export function computeFacets(
     channels: new Map(),
     types: new Map(),
     senders: new Map(),
+    places: new Map(),
     days: new Map(),
   };
   const add = (map: Map<string, number>, key: string) => map.set(key, (map.get(key) ?? 0) + 1);
   const owners = new Set(filters.owners);
+  const keys = (doc.places ?? []).map(placeKeys);
 
   for (const item of doc.items) {
     if (item.kind !== 'message') continue;
@@ -113,6 +132,7 @@ export function computeFacets(
     for (const channel of item.channels) add(facets.channels, channel);
     if (item.type) add(facets.types, item.type);
     if (item.sender) add(facets.senders, item.sender);
+    if (item.place !== undefined) for (const key of keys[item.place]!) add(facets.places, key);
   }
   return facets;
 }

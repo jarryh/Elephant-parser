@@ -10,7 +10,8 @@ import {
   type Filters,
 } from '../src/shared/filter';
 import { createClock } from '../src/shared/format';
-import { FIXTURE } from './helpers';
+import { parseLog } from '../src/shared/parse';
+import { FIXTURE, STORYLOG } from './helpers';
 
 const doc = parseElephant(FIXTURE);
 const texts = (filters: Partial<Filters>) =>
@@ -91,5 +92,47 @@ describe('facets', () => {
 
   it('sort built-in channels before named ones', () => {
     expect(['trade', '#10', 'general', '#2'].sort(compareChannels)).toEqual(['#2', '#10', 'general', 'trade']);
+  });
+});
+
+describe('StoryLog filters', () => {
+  const story = parseLog(STORYLOG);
+  const found = (filters: Partial<Filters>) =>
+    story.items.filter(createMatcher({ ...NO_FILTERS, ...filters }, story.places)).map((item) => item.text);
+
+  it('filter by zone, or by a place within it', () => {
+    expect(found({ places: ['The Stockade'] })).toEqual(['Dark in here.', '14 messages hidden by the game', 'That was close.']);
+    expect(found({ places: ["Elwynn Forest › Goldshire, Lion's Pride Inn"] })).toEqual(['A new evening begins.']);
+    expect(found({ places: ['Elwynn Forest'] })).toEqual(['A new evening begins.']);
+  });
+
+  it('match nothing by place in a file without places', () => {
+    expect(texts({ places: ['Stormwind City'] })).toEqual([]);
+  });
+
+  it('show notes without "Show markers", whatever the channel, type or sender', () => {
+    expect(found({})).toContain('Note: The bargain');
+    expect(found({ channels: ['#3'], types: ['PARTY'], senders: ['Borin Fixture'] })).toContain('Note: The bargain');
+  });
+
+  it('but not outside the period, the character or the search', () => {
+    expect(found({ from: 1898622251 })).not.toContain('Note: The bargain');
+    expect(found({ owners: ['Dorn Placeholder'] })).not.toContain('Note: The bargain');
+    expect(found({ text: 'well met' })).toEqual(['Well met, "traveller".']);
+  });
+
+  it('search roleplay names', () => {
+    expect(found({ text: 'ironvow' })).toContain("I'm waiting in Goldshire.");
+  });
+
+  it('count places within the chosen period', () => {
+    const { places } = computeFacets(story, { owners: [], from: null, to: null }, createClock('UTC').day);
+    expect(places.get('Stormwind City')).toBe(14);
+    expect(places.get('Stormwind City › Cathedral Square')).toBe(14);
+    expect(places.get('The Stockade')).toBe(2);
+  });
+
+  it('count dice as roleplay', () => {
+    expect(found({ types: RP_TYPES })).toContain('Borin Fixture rolls 57 (1-100)');
   });
 });

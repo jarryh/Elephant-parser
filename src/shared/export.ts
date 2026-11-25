@@ -1,6 +1,7 @@
 import { lineTag, speaker, type Clock } from './format';
 import type { EntryState } from './selection';
-import type { Entry, LogDocument, LogItem } from './types';
+import { placeName } from './places';
+import type { Entry, LogDocument, LogItem, Place } from './types';
 
 /** One message as a line of plain text. */
 export function plainLine(item: LogItem, clock: Clock): string {
@@ -21,21 +22,44 @@ function byDay(items: LogItem[], clock: Clock): Map<string, LogItem[]> {
   return days;
 }
 
-export function exportText(items: LogItem[], clock: Clock): string {
+/** Splits a day wherever the place changes. Items without a place stay where they are. */
+function byPlace(items: LogItem[], places: readonly Place[]): { place: string; items: LogItem[] }[] {
+  const parts: { place: string; items: LogItem[] }[] = [];
+  for (const item of items) {
+    const name = item.place === undefined ? '' : placeName(places[item.place]);
+    const last = parts.at(-1);
+    if (last && (!name || name === last.place)) last.items.push(item);
+    else parts.push({ place: name, items: [item] });
+  }
+  return parts;
+}
+
+export function exportText(items: LogItem[], clock: Clock, places: readonly Place[] = []): string {
   const sections = [...byDay(items, clock)].map(([day, list]) =>
-    [`=== ${day} ===`, ...list.map((item) => plainLine(item, clock))].join('\n'),
+    [
+      `=== ${day} ===`,
+      ...byPlace(list, places).flatMap((part) => [
+        ...(part.place ? [`--- ${part.place} ---`] : []),
+        ...part.items.map((item) => plainLine(item, clock)),
+      ]),
+    ].join('\n'),
   );
   return `${sections.join('\n\n')}\n`;
 }
 
-export function exportMarkdown(items: LogItem[], clock: Clock): string {
+export function exportMarkdown(items: LogItem[], clock: Clock, places: readonly Place[] = []): string {
   const line = (item: LogItem) => {
     const who = speaker(item);
     const name = who ? `${escapeMarkdown(who.before)}**${escapeMarkdown(who.name)}**${escapeMarkdown(who.after)}` : '';
     const text = escapeMarkdown(item.text).replace(/\r?\n/g, '<br>');
     return `- \`${clock.time(item.at)}\` *${escapeMarkdown(lineTag(item))}* ${name}${text}`;
   };
-  const sections = [...byDay(items, clock)].map(([day, list]) => `## ${day}\n\n${list.map(line).join('\n')}`);
+  const sections = [...byDay(items, clock)].map(([day, list]) => {
+    const parts = byPlace(list, places).map(
+      (part) => `${part.place ? `### ${escapeMarkdown(part.place)}\n\n` : ''}${part.items.map(line).join('\n')}`,
+    );
+    return `## ${day}\n\n${parts.join('\n\n')}`;
+  });
   return `# Chat log\n\n${sections.join('\n\n')}\n`;
 }
 
@@ -44,7 +68,7 @@ function escapeMarkdown(text: string): string {
   return text.replace(/[\\`*_[\]<>#|~!]/g, '\\$&');
 }
 
-export function exportJson(items: LogItem[], labels: ReadonlyMap<string, string>): string {
+export function exportJson(items: LogItem[], labels: ReadonlyMap<string, string>, places: readonly Place[] = []): string {
   const messages = items.map((item) => ({
     time: new Date(item.at * 1000).toISOString(),
     unixTime: item.at,
@@ -55,6 +79,12 @@ export function exportJson(items: LogItem[], labels: ReadonlyMap<string, string>
     sender: item.sender,
     flag: item.flag ?? null,
     text: item.text,
+    // Only StoryLog files have these. An undefined value is left out.
+    rpName: item.rpName,
+    language: item.language,
+    target: item.target,
+    place: item.place === undefined ? undefined : places[item.place],
+    speakerPlace: item.speakerPlace === undefined ? undefined : places[item.speakerPlace],
   }));
   return `${JSON.stringify({ messages }, null, 2)}\n`;
 }
@@ -76,14 +106,16 @@ export function exportLua(doc: LogDocument, states: EntryState[]): string {
   const { source, logs, entries } = doc;
   const cuts: Cut[] = [];
 
-  const perLog = new Map<number, { entry: Entry; kept: boolean }[]>();
+  // Keys are renumbered per Lua list, which several StoryLog logs share.
+  const perList = new Map<number, { entry: Entry; kept: boolean }[]>();
   entries.forEach((entry, i) => {
-    const list = perLog.get(entry.log) ?? [];
+    const key = logs[entry.log]!.list ?? entry.log;
+    const list = perList.get(key) ?? [];
     list.push({ entry, kept: states[i] === 'kept' });
-    perLog.set(entry.log, list);
+    perList.set(key, list);
   });
 
-  for (const [index, list] of perLog) {
+  for (const list of perList.values()) {
     if (list.every(({ kept }) => kept)) continue;
 
     const ordered = list
@@ -102,7 +134,7 @@ export function exportLua(doc: LogDocument, states: EntryState[]): string {
       }
     }
 
-    const log = logs[index]!;
+    const log = logs[ordered[0]!.entry.log]!;
     if (!ordered.at(-1)!.kept && next > 0 && !log.hasMessage && log.hasMessageSpan) {
       const [start, end] = log.hasMessageSpan;
       cuts.push({ start, end, text: 'true' });

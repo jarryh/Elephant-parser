@@ -21,15 +21,17 @@ export interface Selection {
  * The one definition of "the selection", so chat, raw Lua, exports and stories agree.
  *
  * For Lua, a message that is in several logs only stays in the selected channels, and
- * markers and spacers stay unless removed, because Elephant relies on them.
+ * Elephant's markers and spacers stay unless removed, because Elephant relies on them.
+ * StoryLog doesn't, so its notes follow the filters: they can be private.
  */
 export function computeSelection(doc: LogDocument, filters: Filters, removed: ReadonlySet<string>): Selection {
-  const matches = createMatcher(filters);
+  const matches = createMatcher(filters, doc.places);
   const matched = doc.items.filter(matches);
   const messages = matched.filter((item) => item.kind === 'message' && !removed.has(item.id));
 
   const selected = new Set(messages.map((item) => item.id));
-  const structural = new Set(doc.items.filter((item) => item.kind !== 'message').map((item) => item.id));
+  const candidates = doc.format === 'storylog' ? matched : doc.items;
+  const structural = new Set(candidates.filter((item) => item.kind !== 'message').map((item) => item.id));
   const channels = new Set(filters.channels);
 
   const states = doc.entries.map(({ id, log }): EntryState => {

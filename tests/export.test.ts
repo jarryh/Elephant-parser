@@ -4,9 +4,10 @@ import { exportJson, exportLua, exportMarkdown, exportText } from '../src/shared
 import { channelLabels, NO_FILTERS, RP_TYPES, type Filters } from '../src/shared/filter';
 import { createClock } from '../src/shared/format';
 import { parseLua } from '../src/shared/lua';
+import { parseLog } from '../src/shared/parse';
 import { computeSelection } from '../src/shared/selection';
 import type { LogDocument, LogItem } from '../src/shared/types';
-import { FIXTURE, FIXTURE_CRLF, referenceParse, toPlain, type Plain } from './helpers';
+import { FIXTURE, FIXTURE_CRLF, path, referenceParse, STORYLOG, STORYLOG_CRLF, toPlain, type Plain } from './helpers';
 
 const clock = createClock('UTC');
 const doc = parseElephant(FIXTURE);
@@ -15,10 +16,6 @@ const id = (text: string) => doc.items.find((item) => item.text.includes(text))!
 function cleaned(filters: Partial<Filters> = {}, removed: string[] = [], from: LogDocument = doc) {
   const selection = computeSelection(from, { ...NO_FILTERS, ...filters }, new Set(removed));
   return { ...selection, lua: exportLua(from, selection.states) };
-}
-
-function path(value: Plain, ...keys: (string | number)[]): Plain {
-  return keys.reduce<Plain>((at, key) => (at as [Plain, Plain][]).find(([k]) => k === key)![1], value);
 }
 
 describe('Lua export', () => {
@@ -137,5 +134,63 @@ describe('text exports', () => {
     const { messages: rows } = JSON.parse(exportJson(messages, channelLabels(doc)));
     expect(rows).toHaveLength(3);
     expect(rows[0]).toMatchObject({ type: 'SAY', channels: ['Say'], unixTime: 1898622200 });
+  });
+});
+
+describe('StoryLog exports', () => {
+  const story = parseLog(STORYLOG);
+  const idIn = (text: string) => story.items.find((item) => item.text.includes(text))!.id;
+
+  it.each([
+    ['LF', STORYLOG],
+    ['CRLF', STORYLOG_CRLF],
+  ])('write byte-for-byte the original when everything is kept (%s)', (_name, source) => {
+    expect(cleaned({}, [], parseLog(source)).lua).toBe(source);
+  });
+
+  it.each<[string, Partial<Filters>, string[]]>([
+    ['one channel', { channels: ['#4'] }, []],
+    ['one place', { places: ['The Stockade'] }, []],
+    ['a period', { from: 1898622200, to: 1898622300 }, []],
+    ['removals', {}, [idIn('Well met'), idIn('bargain'), idIn('evening begins')]],
+    ['nothing', { text: 'matches nothing' }, []],
+  ])('parse back to exactly what was kept: %s', (_name, filters, removed) => {
+    const { lua, messages } = cleaned(filters, removed, story);
+    expect(toPlain(parseLua(lua).get('StoryLogDB')!)).toEqual(referenceParse(lua));
+    const back = parseLog(lua).items.filter((item) => item.kind === 'message');
+    expect(back.map((item) => item.id)).toEqual(messages.map((item) => item.id));
+    expect(back.map((item) => item.sender)).toEqual(messages.map((item) => item.sender));
+  });
+
+  it('leave out notes from outside the selection, which can be private', () => {
+    expect(cleaned({ from: 1898713000 }, [], story).lua).not.toContain('The bargain');
+    expect(cleaned({ to: 1898622400 }, [], story).lua).toContain('The bargain');
+  });
+
+  it('renumber keys across channels that share one list', () => {
+    const source =
+      'StoryLogDB = { sessions = { { id = "x", character = "A", messages = {' +
+      ' [1] = { t = 1, e = "SAY", m = "one" }, [2] = { t = 2, e = "PARTY", m = "two" },' +
+      ' [3] = { t = 3, e = "SAY", m = "three" }, [4] = { t = 4, e = "YELL", m = "four" } } } } }';
+    const parsed = parseLog(source);
+    const { lua } = cleaned({}, [parsed.items[1]!.id], parsed);
+    const list = path(referenceParse(lua), 'sessions', 1, 'messages') as [Plain, Plain][];
+    expect(list.map(([key]) => key)).toEqual([1, 2, 3]);
+    expect(parseLog(lua).items.map((item) => item.text)).toEqual(['one', 'three', 'four']);
+  });
+
+  it('head text and Markdown with the place', () => {
+    const { messages } = cleaned({ to: 1898622600 }, [], story);
+    const text = exportText(messages, clock, story.places);
+    expect(text.match(/^--- .* ---$/gm)).toEqual(['--- Stormwind City, Cathedral Square ---', '--- The Stockade ---']);
+    expect(text).toContain('Borin Ironvow bows');
+    expect(exportMarkdown(messages, clock, story.places)).toContain('\n\n### The Stockade\n\n- `');
+  });
+
+  it('put places in the JSON', () => {
+    const { messages } = cleaned({}, [], story);
+    const rows = JSON.parse(exportJson(messages, channelLabels(story), story.places)).messages;
+    expect(rows[0]).toMatchObject({ rpName: 'Élowyn Moonwhisper', target: 'Borin Ironvow', place: { map: 1453 } });
+    expect(rows[1].speakerPlace).toMatchObject({ x: 0.5262 });
   });
 });

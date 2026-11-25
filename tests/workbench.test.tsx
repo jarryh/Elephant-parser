@@ -3,14 +3,17 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseElephant } from '../src/shared/elephant';
 import { NO_FILTERS } from '../src/shared/filter';
+import { parseLog } from '../src/shared/parse';
 import type { AppConfig } from '../src/shared/api';
 import type { Workspace } from '../src/shared/workspace';
 import { indexLines } from '../src/web/components/entryHighlight';
 import { Workbench } from '../src/web/Workbench';
 // jsdom changes URL, so the fixture can't come from helpers.ts.
 import fixture from './fixtures/elephant.lua?raw';
+import storyFixture from './fixtures/storylog.lua?raw';
 
 const doc = parseElephant(fixture.replace(/\r\n/g, '\n'));
+const storyDoc = parseLog(storyFixture.replace(/\r\n/g, '\n'));
 const idOf = (text: string) => doc.items.find((item) => item.text.includes(text))!.id;
 
 let saves: Workspace[];
@@ -49,10 +52,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function show(patch: Partial<Workspace> = {}, story: AppConfig['story'] = null) {
+function show(patch: Partial<Workspace> = {}, story: AppConfig['story'] = null, document = doc) {
   return render(
     <Workbench
-      loaded={{ file: { name: 'Elephant.lua', size: 1, modified: 0 }, document: doc }}
+      loaded={{ file: { name: 'Elephant.lua', size: 1, modified: 0 }, document }}
       initial={{ revision: 0, removed: [], filters: { ...NO_FILTERS, channels: ['#4'] }, ...patch }}
       picker={null}
       loadError=""
@@ -201,4 +204,113 @@ describe('raw Lua line index', () => {
     });
     expect(index[1]).toBe(-1);
   });
+});
+
+describe('a StoryLog file', () => {
+  const showStory = (story: AppConfig['story'] = null) => show({ filters: NO_FILTERS }, story, storyDoc);
+
+  it('shows the place where it changes', () => {
+    showStory();
+    expect([...document.querySelectorAll('.place-chip')].map((chip) => chip.textContent)).toEqual([
+      'Stormwind City, Cathedral Square',
+      'The Stockade',
+      "Elwynn Forest, Goldshire, Lion's Pride Inn",
+      'Dun Morogh',
+    ]);
+  });
+
+  it('shows roleplay names, with the character in the tooltip', () => {
+    showStory();
+    const name = within(line('bows')).getByText('Borin Ironvow');
+    expect(name.title).toBe('Character: Borin Fixture');
+  });
+
+  it('selects a scene, and clears it on a second click', () => {
+    showStory();
+    const scene = () => screen.getByRole('button', { name: /^The bargain/ });
+    fireEvent.click(scene());
+    expect(line('Well met')).toBeDefined();
+    expect(line('Dark in here')).toBeUndefined();
+    // Exactly its ten lines and its note: not the whisper or the channel line from the same minutes.
+    expect(lines()).toHaveLength(11);
+    expect(line('private secret')).toBeUndefined();
+    expect(line('red door')).toBeUndefined();
+    expect(scene().textContent).toContain('Borin Ironvow 4');
+    fireEvent.click(scene());
+    expect(line('Dark in here')).toBeDefined();
+  });
+
+  it('follows an item link without removing the line', () => {
+    showStory();
+    const link = within(line('friend.')).getByRole('link');
+    expect(link.getAttribute('href')).toBe('https://www.wowhead.com/forever/item=12345');
+    expect(link.getAttribute('rel')).toContain('noreferrer');
+    link.addEventListener('click', (event) => event.preventDefault());
+    fireEvent.click(link);
+    expect(line('friend.').classList).not.toContain('removed');
+  });
+
+  it('looks up an NPC on Wowhead, but not a player', () => {
+    showStory();
+    fireEvent.contextMenu(line('gates open'));
+    expect(screen.getByText('Look up on Wowhead').getAttribute('href')).toMatch(/npc=90001$/);
+    fireEvent.click(document.querySelector('.menu-backdrop')!);
+    fireEvent.contextMenu(line('bows'));
+    expect(screen.queryByText('Look up on Wowhead')).toBeNull();
+  });
+
+  it('puts the selection on the map, and goes from a dot to its line', () => {
+    showStory();
+    fireEvent.click(screen.getByRole('tab', { name: 'Map' }));
+    const dot = document.querySelector(`.dot[data-ids="${storyDoc.items.find((item) => item.text.includes('friend.'))!.id}"]`)!;
+    fireEvent.click(dot);
+    expect(screen.getByRole('tab', { name: 'Chat' }).getAttribute('aria-selected')).toBe('true');
+    expect(document.querySelector('.flashed')?.textContent).toContain('friend.');
+  });
+
+  it('shows another map when a scene leaves nothing on the chosen one', () => {
+    showStory();
+    fireEvent.click(screen.getByRole('tab', { name: 'Map' }));
+    const menu = () => document.querySelector<HTMLSelectElement>('select[aria-label="Map"]')!;
+    fireEvent.change(menu(), { target: { value: '1429' } });
+    fireEvent.change(menu(), { target: { value: '1453' } });
+    expect(menu().value).toBe('1453');
+    // The second evening was in Elwynn Forest alone.
+    fireEvent.click(screen.getByRole('button', { name: /^Elwynn Forest/ }));
+    expect(menu().value).toBe('1429');
+    expect(document.querySelectorAll('.dot')).toHaveLength(1);
+    // And the choice comes back with its lines.
+    fireEvent.click(screen.getByRole('button', { name: /^Elwynn Forest/ }));
+    expect(menu().value).toBe('1453');
+  });
+
+  it('colours the busiest players on the map, and draws nobody who was not there', () => {
+    showStory();
+    fireEvent.click(screen.getByRole('tab', { name: 'Map' }));
+    const side = within(document.querySelector<HTMLElement>('.map-side')!);
+    const coloured = [...document.querySelectorAll('.map-person[aria-pressed="true"]')].map((person) => person.textContent);
+    expect(coloured).toEqual(['Élowyn Moonwhisper3', 'Borin Ironvow3', 'Cedra Mock1']);
+    expect(side.queryByText('Battle.net friend')).toBeNull();
+    expect(side.queryByText('Dorn Placeholder')).toBeNull();
+  });
+
+  it('lists senders by roleplay name too', () => {
+    showStory();
+    expect(screen.getByText('Borin Ironvow (Borin Fixture)')).toBeDefined();
+    fireEvent.contextMenu(line('bows'));
+    expect(screen.getByText('Show only Borin Ironvow')).toBeDefined();
+  });
+
+  it('sends places and cast with a story', () => {
+    showStory({ model: 'claude-opus-5-5' });
+    fireEvent.click(screen.getByText('Story…'));
+    const sent = screen.getByLabelText('Turn the selection into a story').querySelector('pre')!.textContent;
+    expect(sent).toContain('Place: Stormwind City, Cathedral Square');
+    expect(sent).toContain('Cast:');
+  });
+});
+
+it('has no map for an Elephant file', () => {
+  show();
+  expect(screen.queryByRole('tab', { name: 'Map' })).toBeNull();
 });

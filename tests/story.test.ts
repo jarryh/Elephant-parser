@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { parseElephant } from '../src/shared/elephant';
 import { createClock } from '../src/shared/format';
+import { parseLog } from '../src/shared/parse';
 import {
   buildPrompt,
   buildTranscript,
   costOf,
   DEFAULT_OPTIONS,
   estimateCost,
+  isPrivate,
   parseOptions,
   storyItems,
   type Include,
 } from '../src/shared/story';
-import { FIXTURE } from './helpers';
+import { FIXTURE, STORYLOG } from './helpers';
 
 const doc = parseElephant(FIXTURE);
 const clock = createClock('UTC');
@@ -97,5 +99,55 @@ describe('cost', () => {
     const { typical, most } = estimateCost('claude-opus-5-5', 8000, 'medium')!;
     expect(typical).toBeLessThan(most);
     expect(most).toBeCloseTo(0.432);
+  });
+});
+
+describe('a story from StoryLog', () => {
+  const story = parseLog(STORYLOG);
+  const send = (whispers: boolean, items = story.items) =>
+    buildTranscript(storyItems(items, { whispers, notices: false }), clock, story);
+
+  it('says where each part happened', () => {
+    expect(send(false).match(/^Place: .*$/gm)).toEqual([
+      'Place: Stormwind City, Cathedral Square',
+      'Place: The Stockade',
+      "Place: Elwynn Forest, Goldshire, Lion's Pride Inn",
+      'Place: Dun Morogh',
+    ]);
+  });
+
+  it('lists who is who and calls them by roleplay name', () => {
+    const text = send(false);
+    expect(text).toContain('- Borin Ironvow: Dwarf Warrior, character name Borin Fixture');
+    expect(text).toContain('[Say] Élowyn Moonwhisper: Well met');
+    expect(text).toContain('[Say in Gnomish] Cedra Mock: Kor ma dun.');
+    expect(text).not.toContain('- Gatekeeper Dummy:');
+  });
+
+  it('keeps dice, and leaves whispers out', () => {
+    expect(send(false)).toContain('[Dice roll] Borin Fixture rolls 57 (1-100)');
+    expect(send(false)).not.toMatch(/private secret|battle net note/);
+  });
+
+  it('names nobody from lines that are not sent', () => {
+    const whisper = story.items.filter((item) => item.type === 'WHISPER' || item.text === 'Dark in here.');
+    expect(send(false, whisper)).not.toMatch(/Cedra|Borin|Stormwind/);
+    expect(send(true, whisper)).toContain('- Cedra Mock: Gnome Mage');
+  });
+
+  it('calls the recorder by their roleplay name throughout', () => {
+    const text = send(false);
+    expect(text).toContain('Recorded by: Élowyn Moonwhisper (character Élowyn Testwood), Dorn Placeholder');
+    expect(text).toContain('You wave back. ("you" = Élowyn Moonwhisper)');
+  });
+
+  it('does not take a note for a whisper', () => {
+    const note = story.items.find((item) => item.type === 'NOTE')!;
+    expect(note.channels).toEqual([]);
+    expect(isPrivate(note)).toBe(false);
+  });
+
+  it('is explained in the prompt', () => {
+    expect(buildPrompt('log', DEFAULT_OPTIONS).system).toMatch(/"Place:" lines.*"Cast:"/);
   });
 });

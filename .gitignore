@@ -222,7 +222,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Elephant-parser: private WoW chat logs (SavedVariables) and local secrets
+# story-log: private WoW chat logs (SavedVariables) and local secrets
 Data/
 .env
 

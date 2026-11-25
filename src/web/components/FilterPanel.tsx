@@ -8,22 +8,30 @@ import {
   type Filters,
 } from '../../shared/filter';
 import { typeColor, typeLabel } from '../../shared/format';
+import { WITHIN } from '../../shared/places';
+import type { Scene } from '../../shared/scenes';
 import type { LogDocument } from '../../shared/types';
 import { clock, dayRange, dayTitle, fromInput, toInput } from '../time';
 import { CheckList, type Choice } from './CheckList';
+import { SceneList } from './SceneList';
 
 interface Props {
   doc: LogDocument;
+  scenes: Scene[];
   filters: Filters;
   onChange: (filters: Filters) => void;
   /** Removes a channel or sender within the chosen characters and period. */
   onRemove: (group: Partial<Filters>, label: string) => void;
 }
 
-export function FilterPanel({ doc, filters, onChange, onRemove }: Props) {
+export function FilterPanel({ doc, scenes, filters, onChange, onRemove }: Props) {
   const { owners, from, to } = filters;
   const facets = useMemo(() => computeFacets(doc, { owners, from, to }, clock.day), [doc, owners, from, to]);
   const labels = useMemo(() => channelLabels(doc), [doc]);
+  const rpNames = useMemo(
+    () => new Map((doc.speakers ?? []).flatMap((who) => (who.rp && !who.npc ? [[who.name, who.rp] as const] : []))),
+    [doc],
+  );
   const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch });
 
   /** Rows with a count, plus ticked ones that currently have none. */
@@ -40,7 +48,19 @@ export function FilterPanel({ doc, filters, onChange, onRemove }: Props) {
   const typeChoices = choices(facets.types, filters.types, typeLabel)
     .map((choice) => ({ ...choice, color: typeColor(choice.value) }))
     .sort((a, b) => b.count - a.count);
-  const senderChoices = choices(facets.senders, filters.senders).sort((a, b) => b.count - a.count);
+  // Each zone, then the places in it.
+  const placeChoices = choices(facets.places, filters.places, (value) => {
+    const at = value.indexOf(WITHIN);
+    return at < 0 ? value : `    ${value.slice(at).trim()}`;
+  }).sort(
+    (a, b) =>
+      a.value.split(WITHIN)[0]!.localeCompare(b.value.split(WITHIN)[0]!) || a.value.localeCompare(b.value),
+  );
+  // The chat shows roleplay names, so they must be findable here. The filter stays by character.
+  const senderChoices = choices(facets.senders, filters.senders, (value) => {
+    const rp = rpNames.get(value);
+    return rp ? `${rp} (${value})` : value;
+  }).sort((a, b) => b.count - a.count);
 
   const scope = owners.length || from !== null || to !== null ? ' (chosen characters and period)' : '';
   const days = [...facets.days].sort(([a], [b]) => b.localeCompare(a));
@@ -110,6 +130,18 @@ export function FilterPanel({ doc, filters, onChange, onRemove }: Props) {
         )}
       </details>
 
+      <SceneList scenes={scenes} filters={filters} onChange={set} open={doc.format === 'storylog'} />
+
+      {placeChoices.length > 0 && (
+        <CheckList
+          title="Place"
+          choices={placeChoices}
+          selected={filters.places}
+          onChange={(value) => set({ places: value })}
+          searchable
+        />
+      )}
+
       <CheckList
         title="Character"
         choices={choices(facets.owners, owners)}
@@ -156,14 +188,17 @@ export function FilterPanel({ doc, filters, onChange, onRemove }: Props) {
         open={false}
       />
 
-      <label className="switch">
-        <input
-          type="checkbox"
-          checked={filters.showMarkers}
-          onChange={(event) => set({ showMarkers: event.target.checked })}
-        />
-        Show "Logging started" markers
-      </label>
+      {/* StoryLog's notes always show. */}
+      {doc.format !== 'storylog' && (
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={filters.showMarkers}
+            onChange={(event) => set({ showMarkers: event.target.checked })}
+          />
+          Show "Logging started" markers
+        </label>
+      )}
     </aside>
   );
 }

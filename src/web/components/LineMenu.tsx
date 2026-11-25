@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Filters } from '../../shared/filter';
-import type { LogItem } from '../../shared/types';
+import type { LogItem, Speaker } from '../../shared/types';
+import { npcUrl, type Game } from '../../shared/wowhead';
 import { clock, dayTitle } from '../time';
 
 export interface MenuTarget {
@@ -13,6 +14,8 @@ interface Props {
   target: MenuTarget;
   messages: LogItem[];
   labels: Map<string, string>;
+  speakers: readonly Speaker[] | undefined;
+  game: Game;
   removed: ReadonlySet<string>;
   onClose: () => void;
   onFilter: (patch: Partial<Filters>) => void;
@@ -20,7 +23,18 @@ interface Props {
   onShowRaw: (id: string) => void;
 }
 
-export function LineMenu({ target, messages, labels, removed, onClose, onFilter, onBulk, onShowRaw }: Props) {
+export function LineMenu({
+  target,
+  messages,
+  labels,
+  speakers,
+  game,
+  removed,
+  onClose,
+  onFilter,
+  onBulk,
+  onShowRaw,
+}: Props) {
   const { item, x, y } = target;
   const box = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: x, top: y });
@@ -59,6 +73,9 @@ export function LineMenu({ target, messages, labels, removed, onClose, onFilter,
   };
 
   const { sender } = item;
+  // As the chat names them. The filter itself goes by character.
+  const shown = item.rpName ?? sender;
+  const lookUp = npcUrl(game, item, speakers);
   return (
     <>
       {/* Takes the click that closes the menu, which would otherwise remove a line. */}
@@ -78,11 +95,16 @@ export function LineMenu({ target, messages, labels, removed, onClose, onFilter,
         {sender && (
           <div className="menu-group">
             <button role="menuitem" onClick={run(() => onFilter({ senders: [sender] }))}>
-              Show only {sender}
+              Show only {shown}
             </button>
             {groupAction(
               messages.filter((entry) => entry.sender === sender),
-              `from ${sender}`,
+              `from ${shown}`,
+            )}
+            {lookUp && (
+              <a role="menuitem" href={lookUp} target="_blank" rel="noreferrer noopener" onClick={onClose}>
+                Look up on Wowhead
+              </a>
             )}
           </div>
         )}

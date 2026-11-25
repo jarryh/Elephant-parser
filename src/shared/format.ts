@@ -26,6 +26,7 @@ const TYPES = new Map<string, [label: string, color: string]>([
   ['RAID_BOSS_EMOTE', ['Boss emote', '#ffd633']],
   ['SYSTEM', ['System', '#e8d44d']],
   ['BG_SYSTEM_NEUTRAL', ['Battleground', '#f0a040']],
+  ['ROLL', ['Dice roll', '#e8d44d']],
   ['LOOT', ['Loot', '#38b878']],
   ['MONEY', ['Money', '#c8c860']],
   ['SKILL', ['Skill', '#8f8fff']],
@@ -54,10 +55,11 @@ export function lineTag(item: LogItem): string {
  * Null when the text already names them, or there is nobody to name.
  */
 export function speaker(item: LogItem): { before: string; name: string; after: string } | null {
-  const name = item.sender;
-  if (!name) return null;
+  if (!item.sender) return null;
+  const name = item.rpName ?? item.sender;
   switch (item.type) {
     case 'TEXT_EMOTE':
+    case 'ROLL':
     case 'MONSTER_EMOTE':
     case 'RAID_BOSS_EMOTE':
     case 'ACHIEVEMENT':
@@ -79,6 +81,10 @@ export function speaker(item: LogItem): { before: string; name: string; after: s
     default:
       return { before: '', name, after: ': ' };
   }
+}
+
+export function isNpc(item: LogItem): boolean {
+  return /^(?:MONSTER_|RAID_BOSS_)/.test(item.type);
 }
 
 export interface Clock {
