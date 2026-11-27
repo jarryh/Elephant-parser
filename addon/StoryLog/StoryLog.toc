@@ -1,8 +1,10 @@
 ## Interface: 16001, 120105
 ## Title: StoryLog
 ## Notes: Records roleplay chat together with the place where it was said, and what happened around it.
-## Version: 0.2.0
+## Version: 0.3.0
 ## Category-enUS: Roleplay
+## IconTexture: Interface\Icons\INV_Misc_Book_09
+## Group: StoryLog
 ## SavedVariables: StoryLogDB
 ## SavedVariablesPerCharacter: StoryLogCharDB
 ## OptionalDeps: totalRP3
@@ -15,4 +17,6 @@ Combat.lua
 Npc.lua
 Actions.lua
 Archive.lua
+Options.lua
+Icon.lua
 Commands.lua

@@ -24,7 +24,7 @@ beforeEach(() => {
   loads = [];
   answer = (name, content) => {
     data = new Map([[name, content], ...data]);
-    return { status: 200, body: { name, kept: null, unchanged: false } };
+    return { status: 200, body: { name, kept: null, replaced: false, unchanged: false } };
   };
 
   // The virtual list measures the page, and jsdom has no layout.
@@ -124,7 +124,7 @@ describe('adding a file', () => {
   it('reads a replaced file again, and says where the older one went', async () => {
     answer = (name, content) => {
       data.set(name, content);
-      return { status: 200, body: { name, kept: 'Elephant-2020-03-01.lua', unchanged: false } };
+      return { status: 200, body: { name, kept: 'Elephant-2020-03-01.lua', replaced: true, unchanged: false } };
     };
     await open();
     expect(loads).toEqual(['Elephant.lua']);
@@ -135,8 +135,19 @@ describe('adding a file', () => {
     expect(chosen()).toBe('Elephant.lua');
   });
 
+  it('says why no copy was kept of a file that the new one holds', async () => {
+    data.set('StoryLog.lua', storylog);
+    answer = (name, content) => {
+      data.set(name, content);
+      return { status: 200, body: { name, kept: null, replaced: true, unchanged: false } };
+    };
+    await open();
+    fireEvent.drop(window, drag([lua('StoryLog.lua', storylog.replace('["limit"] = 3,', '["limit"] = 5,'))]));
+    await screen.findByText('Replaced StoryLog.lua. It holds every line of the older file, so no copy was kept.');
+  });
+
   it('says when Data already holds the file', async () => {
-    answer = (name) => ({ status: 200, body: { name, kept: null, unchanged: true } });
+    answer = (name) => ({ status: 200, body: { name, kept: null, replaced: false, unchanged: true } });
     await open();
     fireEvent.drop(window, drag([lua('Elephant.lua', elephant)]));
     await screen.findByText('Elephant.lua is already in Data, with the same content.');

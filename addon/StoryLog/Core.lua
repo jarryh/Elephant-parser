@@ -7,8 +7,9 @@
 local ADDON, ns = ...
 
 local VERSION = 1
--- In MB. Past it, finished sessions move to an archive file: see Archive.lua.
-local DEFAULT_LIMIT = 3
+-- In MB. Past it, finished sessions move to an archive file: see Archive.lua. Not past
+-- the most, which is also what an archive file takes, as they all move to one.
+local DEFAULT_LIMIT, MAX_LIMIT = 3, 8
 
 local issecret = issecretvalue or function() return false end
 
@@ -58,32 +59,45 @@ local function say(message)
 end
 
 ns.safe, ns.try, ns.filled, ns.finite, ns.say, ns.clip = safe, try, filled, finite, say, clip
-ns.VERSION, ns.DEFAULT_LIMIT = VERSION, DEFAULT_LIMIT
+ns.VERSION, ns.DEFAULT_LIMIT, ns.MAX_LIMIT = VERSION, DEFAULT_LIMIT, MAX_LIMIT
 
 --------------------------------------------------------------------------------
 -- What is recorded
 
 ns.CATEGORIES = {
-	"speech", "rolls", "guild", "channels", "notices", "group", "quests",
-	"items", "travel", "combat", "npc", "actions", "profiles",
+	"speech", "party", "whispers", "creatures", "rolls", "guild", "channels", "notices",
+	"group", "quests", "items", "travel", "combat", "npc", "actions", "profiles",
 }
 
+-- Where the icon sits on the edge of the minimap, in degrees counterclockwise from the
+-- right: at the lower left.
+local ICON_ANGLE = 210
+ns.ICON_ANGLE = ICON_ANGLE
+
 local DEFAULTS = {
-	recording = true, speech = true, rolls = true, guild = true, channels = false, notices = false,
+	recording = true, icon = true,
+	speech = true, party = true, whispers = true, creatures = true,
+	rolls = true, guild = true, channels = false, notices = false,
 	group = true, quests = true,
 	items = true, travel = true, combat = true, npc = true, actions = true, profiles = true,
 }
 
+-- Once one switch, `speech`. A log from then gives them what it had for speech.
+local FROM_SPEECH = { "party", "whispers", "creatures" }
+
 local EVENTS = {
-	speech = {
-		"SAY", "YELL", "EMOTE", "TEXT_EMOTE",
+	speech = { "SAY", "YELL", "EMOTE", "TEXT_EMOTE" },
+	party = {
 		"PARTY", "PARTY_LEADER", "RAID", "RAID_LEADER", "RAID_WARNING",
 		"INSTANCE_CHAT", "INSTANCE_CHAT_LEADER",
-		"WHISPER", "WHISPER_INFORM", "BN_WHISPER", "BN_WHISPER_INFORM",
+	},
+	whispers = { "WHISPER", "WHISPER_INFORM", "BN_WHISPER", "BN_WHISPER_INFORM" },
+	creatures = {
 		"MONSTER_SAY", "MONSTER_YELL", "MONSTER_EMOTE", "MONSTER_WHISPER", "MONSTER_PARTY",
 		"RAID_BOSS_EMOTE", "RAID_BOSS_WHISPER",
 	},
 	guild = { "GUILD", "OFFICER", "GUILD_DISCORD" },
+	-- Numbered channels. Each can also be chosen by its name: see `chosenChannel`.
 	channels = { "CHANNEL" },
 	-- SYSTEM is also where dice rolls arrive.
 	notices = {
@@ -168,7 +182,7 @@ local function failed(problem)
 	failures.count = failures.count + 1
 	if failures.count > 1 then return end
 	failures.first = tostring(problem)
-	local function tell() say("something could not be recorded in full. /storylog shows the error.") end
+	local function tell() say("something could not be recorded in full. /storylog status shows the error.") end
 	-- Not now: printing from inside one of the game's own functions taints the chat window.
 	if not (C_Timer and type(C_Timer.After) == "function" and pcall(C_Timer.After, 0, tell)) then tell() end
 end
@@ -429,6 +443,95 @@ function ns.recording(category)
 	return ns.session ~= nil and settings ~= nil and settings.recording == true and settings[category] == true
 end
 
+-- A channel's name as a switch, and as it is shown. The game numbers channels and adds
+-- the zone to its own, so "2. General - Elwynn Forest" and "General - Stormwind City"
+-- are both "general", shown as "General". Nil for no name.
+function ns.channelKey(name)
+	name = filled(name)
+	if not name then return nil end
+	name = name:gsub("^%s*%d+%.%s*", "")
+	local zone = name:find("%s+%-%s")
+	if zone then name = name:sub(1, zone - 1) end
+	local shown = filled(name:match("^%s*(.-)%s*$"))
+	if not shown then return nil end
+	return shown:lower(), shown
+end
+
+-- True when the channel of that name was chosen on its own.
+local function chosenChannel(settings, name)
+	local key = ns.channelKey(name)
+	local names = settings.channelNames
+	return key ~= nil and type(names) == "table" and names[key] == true
+end
+
+-- The channels that the player is in, as { key =, name = }, in the game's order. Some
+-- clients give a number and a name for each, others a third value too.
+function ns.joinedChannels()
+	local values = { n = 0 }
+	local function keep(...)
+		values.n = select("#", ...)
+		for i = 1, values.n do values[i] = select(i, ...) end
+	end
+	keep(try(GetChannelList))
+
+	local joined, seen, i = {}, {}, 1
+	while i <= values.n do
+		local id, name = values[i], values[i + 1]
+		if type(id) == "number" and type(name) == "string" then
+			local key, shown = ns.channelKey(name)
+			if key and not seen[key] then
+				seen[key] = true
+				joined[#joined + 1] = { key = key, name = shown }
+			end
+			i = i + 2
+		else
+			i = i + 1
+		end
+	end
+	return joined
+end
+
+--------------------------------------------------------------------------------
+-- Switches, for /storylog and its window alike. A switch takes effect at once: every
+-- event is registered at login, and the settings are read whenever one arrives.
+
+local function changed()
+	if ns.refreshOptions then ns.refreshOptions() end
+	if ns.refreshIcon then ns.refreshIcon() end
+end
+
+function ns.setRecording(on)
+	ns.db.settings.recording = on == true
+	changed()
+end
+
+-- Shows or hides the icon at the minimap.
+function ns.setIcon(on)
+	ns.db.settings.icon = on == true
+	changed()
+end
+
+-- False when there is no such category.
+function ns.setCategory(category, on)
+	for _, known in ipairs(ns.CATEGORIES) do
+		if known == category then
+			ns.db.settings[known] = on == true
+			changed()
+			return true
+		end
+	end
+	return false
+end
+
+-- Chooses a channel by its name, or forgets it. Its key, or nil for no name.
+function ns.setChannel(name, on)
+	local key = ns.channelKey(name)
+	if not key then return nil end
+	ns.db.settings.channelNames[key] = on == true or nil
+	changed()
+	return key
+end
+
 -- Saves a line about something that happened. `fields` are the line's own; `s` is the
 -- one who did it, the recorder unless it says otherwise, and `false` for nobody.
 -- Nil while that category is not recorded.
@@ -521,15 +624,22 @@ local function record(chatType, ...)
 	local settings = ns.db.settings
 	if not settings.recording then return end
 
+	local wanted = settings[category] == true
+	if not wanted and chatType == "CHANNEL" then
+		-- A hidden name chooses nothing.
+		local _, _, _, rawChannel, _, _, _, _, rawBaseName = ...
+		wanted = chosenChannel(settings, filled(safe(rawBaseName)) or filled(safe(rawChannel)))
+	end
+
 	local isSystem = chatType == "SYSTEM"
 	local rolls = isSystem and settings.rolls
 	local listened = listening(chatType, settings)
-	if not settings[category] and not rolls and not listened then return end
+	if not wanted and not rolls and not listened then return end
 
 	local rawText, rawSender, _, _, _, _, _, _, _, _, _, rawGUID = ...
 	if issecret(rawText) then
 		-- A hidden system line can't be told from a roll, so it only counts as a notice.
-		if settings[category] then recordHidden() end
+		if wanted then recordHidden() end
 		return
 	end
 
@@ -545,7 +655,7 @@ local function record(chatType, ...)
 	end
 	if event == chatType then
 		if listened and heard(chatType, text, settings) then return end
-		if not settings[category] then return end
+		if not wanted then return end
 	end
 
 	local message = add({ t = now(), e = event, m = text })
@@ -771,10 +881,26 @@ local function loadDatabase()
 	db.version = VERSION
 	if type(db.sessions) ~= "table" then db.sessions = {} end
 	if type(db.settings) ~= "table" then db.settings = {} end
-	for key, value in pairs(DEFAULTS) do
-		if type(db.settings[key]) ~= "boolean" then db.settings[key] = value end
+	local settings = db.settings
+	if type(settings.speech) == "boolean" then
+		for _, key in ipairs(FROM_SPEECH) do
+			if type(settings[key]) ~= "boolean" then settings[key] = settings.speech end
+		end
 	end
+	for key, value in pairs(DEFAULTS) do
+		if type(settings[key]) ~= "boolean" then settings[key] = value end
+	end
+	-- Channels chosen by name: { general = true }.
+	local names = {}
+	if type(settings.channelNames) == "table" then
+		for key, value in pairs(settings.channelNames) do
+			if type(key) == "string" and value == true then names[key] = true end
+		end
+	end
+	settings.channelNames = names
+	settings.iconAngle = (finite(settings.iconAngle) or ICON_ANGLE) % 360
 	if not finite(db.settings.limit) or db.settings.limit < 0 then db.settings.limit = DEFAULT_LIMIT end
+	if db.settings.limit > MAX_LIMIT then db.settings.limit = MAX_LIMIT end
 	ns.db = db
 end
 
@@ -818,7 +944,7 @@ local function onLogin()
 	for event in pairs(handlers) do register(event) end
 	frame:RegisterEvent("PLAYER_LOGOUT")
 
-	if not ns.db.settings.recording then say("recording is off. /storylog on starts it.") end
+	if not ns.db.settings.recording then say("recording is off. /storylog on, or /storylog for the window, starts it.") end
 end
 
 -- What the other modules want done at login, once the session exists.

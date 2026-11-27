@@ -3,6 +3,7 @@
 ## Notes: Older StoryLog sessions. StoryLog loads it only when the log is split.
 ## Version: 0.1.0
 ## Category-enUS: Roleplay
+## Group: StoryLog
 ## LoadOnDemand: 1
 ## Dependencies: StoryLog
 ## SavedVariables: StoryLogArchive1DB

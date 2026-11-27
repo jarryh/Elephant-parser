@@ -2,10 +2,12 @@ import { constants } from 'node:fs';
 import { copyFile, readdir, readFile, stat, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import type { AddedFile, DataFile, LoadedFile } from '../shared/api';
+import { holdsAll } from '../shared/covers';
 import { NotLogFileError } from '../shared/document';
 import { LuaParseError } from '../shared/lua';
 import { parseLog } from '../shared/parse';
 import { NewerStoryLogError } from '../shared/storylog';
+import type { LogDocument } from '../shared/types';
 import { atomicWrite } from './atomicWrite';
 import { HttpError } from './errors';
 
@@ -17,7 +19,7 @@ const COPIES_PER_DAY = 99;
 
 /**
  * Access to Data/. A log is never edited. `add` is the only method that writes, and it
- * keeps whatever it would replace.
+ * keeps a dated copy of the file it replaces, unless the new one holds every line of it.
  */
 export class DataFiles {
   private readonly cache = new Map<string, LoadedFile>();
@@ -94,8 +96,9 @@ export class DataFiles {
 
     const bytes = Buffer.from(content, 'utf8');
     if (bytes.toString('utf8') !== content) throw new HttpError(400, `${name} is not valid text.`);
+    let document: LogDocument;
     try {
-      parseLog(content);
+      document = parseLog(content);
     } catch (error) {
       throw unreadable(name, error);
     }
@@ -109,11 +112,26 @@ export class DataFiles {
 
     let kept: string | null = null;
     if (old) {
-      if ((await readFile(file)).equals(bytes)) return { name: target, kept, unchanged: true };
-      kept = await this.keep(old);
+      if ((await readFile(file)).equals(bytes)) return { name: target, kept, replaced: false, unchanged: true };
+      if (!(await this.covers(document, old))) kept = await this.keep(old);
     }
     await atomicWrite(file, content);
-    return { name: target, kept, unchanged: false };
+    // What was read of the older file to compare them is of no more use.
+    this.cache.delete(target);
+    return { name: target, kept, replaced: old !== undefined, unchanged: false };
+  }
+
+  /**
+   * True when the new document holds every line of the file it replaces, so a copy would
+   * only take space. A file that can't be read is kept, in case it holds something.
+   */
+  private async covers(next: LogDocument, old: DataFile): Promise<boolean> {
+    if (next.format !== 'storylog') return false;
+    try {
+      return holdsAll(next, (await this.load(old.name)).document);
+    } catch {
+      return false;
+    }
   }
 
   /**

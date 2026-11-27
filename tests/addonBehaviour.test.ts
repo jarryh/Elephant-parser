@@ -199,7 +199,7 @@ describe('hidden values', () => {
       chat("SAY", { text = newSecret(), sender = newSecret(), guid = newSecret(), discord = newSecret() })
       chat("PARTY", { text = newSecret() })
       chat("SYSTEM", { text = newSecret() })
-      slash("")
+      slash("status")
     `);
     // The serializer throws on a secret, as the game drops them.
     const saved = client.logout();
@@ -212,7 +212,7 @@ describe('hidden values', () => {
   it('are not needed: a client without them, or without the optional functions, still records', () => {
     const client = new Client();
     client.run('issecretvalue = nil; C_Map = nil; UnitPosition = nil; C_ChatInfo = nil; GetMinimapZoneText = nil; IsIndoors = nil');
-    client.login().run(ME).run('slash("")');
+    client.login().run(ME).run('slash("status")');
     expect(session(client).messages).toHaveLength(1);
   });
 });
@@ -400,7 +400,7 @@ describe('when something goes wrong', () => {
     client.run('NS.playerPlace = function() error("no place today") end').run(ME).run(BORIN);
     // Said a moment later: printing inside one of the game's own functions would taint the chat.
     expect(client.printed()).toBe('');
-    client.run('runTimers(); slash("")');
+    client.run('runTimers(); slash("status")');
     expect(session(client).messages).toEqual([
       { t: 1898622000, e: 'SAY', m: 'hi' },
       { t: 1898622000, e: 'SAY', m: 'hi' },
@@ -694,34 +694,123 @@ describe('archive files', () => {
     expect(sessionsIn(files.StoryLog)).toHaveLength(3);
   });
 
-  it('give way to the next file when one is full', () => {
+  /** Two more sessions come back from an older copy of the log, after the first file took one and two. */
+  const twoMore = () => {
     const filled = play(play({ StoryLog: MAIN }).files).files;
-    // Two more sessions come back from an older copy of the log, and the first file can take no more.
     const more = MAIN.replace('"one"', '"three"').replace('"two"', '"four"');
     const archive = /\["archive"\] = \{[\s\S]*?\r\n\},\r\n(?=\["sessions"\])/.exec(filled.StoryLog!)![0];
     const main = `${more}\nStoryLogDB.archive = (function() local ${archive.replace('["archive"]', 'archive').replace(/,\r\n$/, '')} return archive end)()`;
-    const next = play({ ...filled, StoryLog: main }, 'NS.VOLUME_BYTES = 25000');
+    return { ...filled, StoryLog: main };
+  };
+
+  it.each([
+    ['in bytes', 'NS.VOLUME_BYTES = 25000'],
+    ['in different strings and numbers', 'NS.VOLUME_CONSTANTS = 300'],
+  ])('give way to the next file when one is full %s', (_name, before) => {
+    const next = play(twoMore(), before);
     expect(next.printed).toContain('copied to StoryLog_Archive2.lua');
+    expect(next.printed).not.toContain('emptied');
     expect(sessionsIn(next.files.StoryLog_Archive2)).toEqual(['three', 'four']);
     expect(sessionsIn(next.files[A1])).toEqual(['one', 'two']);
     expect(next.client.get('StoryLogDB.archive.volume')).toBe(2);
   });
 
-  it('say so when all are full, and start again after /storylog archive clear', () => {
-    const tiny = (volume: number) => `StoryLogArchive${volume}DB = { version = 1, sessions = { { id = "old${volume}", messages = {} } } }`;
-    const full: Files = { StoryLog: MAIN };
-    for (let volume = 1; volume <= 5; volume++) full[`StoryLog_Archive${volume}`] = tiny(volume);
+  it('measure each session once in a login', () => {
+    const before = `
+      local measure = NS.sessionSize
+      MEASURED = {}
+      NS.sessionSize = function(session)
+        MEASURED[session.id] = (MEASURED[session.id] or 0) + 1
+        return measure(session)
+      end
+      NS.VOLUME_BYTES = 25000`;
+    const { client } = play(twoMore(), before);
+    expect(client.get('MEASURED')).toEqual({ one: 1, two: 1, three: 1, four: 1 });
+  });
 
-    const stuck = play(full, 'NS.VOLUME_BYTES = 1');
-    expect(stuck.printed).toContain('all 5 archive files are full');
-    expect(sessionsIn(stuck.files.StoryLog)).toHaveLength(3);
-    expect(stuck.files.StoryLog).not.toContain('["pending"]');
-    expect(stuck.files[A1]).toContain('old1');
+  describe('when all are full', () => {
+    const SESSION = (id: string, started: number) => `{ id = "${id}", started = ${started}, messages = { { t = ${started}, e = "SAY", m = "old" } } }`;
+    /** Each file holds a session of its own, and the fifth holds the oldest, three of them. */
+    const full = (): Files => {
+      const files: Files = { StoryLog: MAIN };
+      for (let volume = 1; volume <= 12; volume++) {
+        const sessions =
+          volume === 5
+            ? [SESSION('old5a', 100), SESSION('old5b', 200), SESSION('old5c', 300)]
+            : [SESSION(`old${volume}`, 400 + volume)];
+        files[`StoryLog_Archive${volume}`] = `StoryLogArchive${volume}DB = { version = 1, sessions = { ${sessions.join(', ')} } }`;
+      }
+      return files;
+    };
+    const A5 = 'StoryLog_Archive5';
+    const untouched = (files: Files) => {
+      for (let volume = 1; volume <= 12; volume++) {
+        if (volume !== 5) expect(sessionsIn(files[`StoryLog_Archive${volume}`])).toEqual([`old${volume}`]);
+      }
+    };
 
-    // The player moved the files away and said so.
-    const cleared = new Client({ files: { StoryLog: stuck.files.StoryLog! } }).login().run('slash("archive clear")').logoutAll();
-    const fresh = play(cleared);
-    expect(fresh.printed).toContain('copied to StoryLog_Archive1.lua');
+    it('empty the one whose sessions are oldest, and say so', () => {
+      const emptied = play(full(), 'NS.VOLUME_BYTES = 1');
+      expect(emptied.printed).toContain('every archive file is full, so StoryLog_Archive5.lua was emptied');
+      expect(emptied.printed).toContain('It held 3 sessions');
+      expect(emptied.printed).toContain('copied to StoryLog_Archive5.lua');
+      expect(sessionsIn(emptied.files[A5])).toEqual(['one', 'two']);
+      untouched(emptied.files);
+      expect(emptied.client.get('StoryLogDB.archive.pending.volume')).toBe(5);
+      // Still in the main log, until the file is seen to hold them.
+      expect(sessionsIn(emptied.files.StoryLog)).toEqual(expect.arrayContaining(['one', 'two']));
+
+      const after = play(emptied.files);
+      expect(after.printed).toContain('2 older sessions are now in StoryLog_Archive5.lua');
+      expect(sessionsIn(after.files.StoryLog)).not.toContain('one');
+      untouched(after.files);
+    });
+
+    it('warn a file ahead, and mark it in /storylog archive', () => {
+      const emptied = play(full(), 'NS.VOLUME_BYTES = 1');
+      // The first file's session is now the oldest.
+      expect(emptied.printed).toContain('when StoryLog_Archive5.lua is full, StoryLog_Archive1.lua will be emptied: 1 sessions');
+      emptied.client.run('W.printed = {}; slash("archive")');
+      const listed = emptied.client.printed();
+      expect(listed).toContain('StoryLog_Archive1.lua: 1 sessions, 1 lines, about 0.0 MB, 21974 days ago (emptied when the one in use is full)');
+      expect(listed).toContain('StoryLog_Archive5.lua: 2 sessions, 200 lines, about 0.0 MB, 21974 days ago (in use)');
+      emptied.client.run('W.printed = {}; slash("status")');
+      expect(emptied.client.printed()).toContain('StoryLog_Archive5.lua is in use, and StoryLog_Archive1.lua is emptied when it is full');
+    });
+
+    it('do again an emptying that the game did not save', () => {
+      const emptied = play(full(), 'NS.VOLUME_BYTES = 1');
+      // The main log was saved, and the archive file was not: it still holds the old sessions.
+      const again = play({ ...emptied.files, [A5]: full()[A5]! });
+      expect(again.printed).toContain('StoryLog_Archive5.lua was not saved with the sessions copied to it');
+      expect(again.printed).toContain('StoryLog_Archive5.lua was emptied');
+      expect(sessionsIn(again.files[A5])).toEqual(['one', 'two']);
+      expect(sessionsIn(again.files.StoryLog)).toEqual(expect.arrayContaining(['one', 'two']));
+      untouched(again.files);
+
+      const after = play(again.files);
+      expect(after.printed).toContain('2 older sessions are now in StoryLog_Archive5.lua');
+      untouched(after.files);
+    });
+
+    it('count as empty after /storylog archive clear, once the player moved them away', () => {
+      const emptied = play(full(), 'NS.VOLUME_BYTES = 1');
+      const cleared = new Client({ files: { StoryLog: emptied.files.StoryLog! } })
+        .login()
+        .run('slash("archive clear")')
+        .logoutAll();
+      const fresh = play(cleared);
+      expect(fresh.printed).toContain('copied to StoryLog_Archive1.lua');
+      expect(fresh.printed).not.toContain('emptied');
+    });
+
+    it('count a file from before the bookkeeping had dates as the oldest', () => {
+      const { client } = play(full(), 'NS.VOLUME_BYTES = 1');
+      client.run('StoryLogDB.archive.held[7].oldest = nil; StoryLogDB.archive.held[7].newest = nil');
+      expect(client.get('NS.archiveNext()')).toBe(7);
+      client.run('W.printed = {}; slash("archive")');
+      expect(client.printed()).toContain('StoryLog_Archive7.lua: 1 sessions, 1 lines, about 0.0 MB (emptied');
+    });
   });
 
   it('are listed by /storylog archive without being loaded', () => {
@@ -729,23 +818,81 @@ describe('archive files', () => {
     const client = new Client({ files: { StoryLog: files.StoryLog! } });
     client.run(`W.addons.${A1}.disabled = true`).login().run('W.printed = {}; slash("archive")');
     const printed = client.printed();
-    expect(printed).toContain('StoryLog_Archive1.lua: 2 sessions, 200 lines, about 0.0 MB (in use)');
+    expect(printed).toContain('StoryLog_Archive1.lua: 2 sessions, 200 lines, about 0.0 MB, 21974 days ago (in use)');
     expect(printed).toContain('StoryLog_Archive2.lua: empty');
+    expect(printed).toContain('StoryLog_Archive12.lua: empty');
     expect(printed).toContain('leave the main log at the next login');
   });
 
-  it('follow /storylog limit', () => {
+  it('follow /storylog limit, up to the size of an archive file', () => {
     const client = new Client().login();
     client.run('slash("limit 5")');
     expect(client.get('StoryLogDB.settings.limit')).toBe(5);
-    for (const wrong of ['limit', 'limit 0.5', 'limit 21', 'limit -1', 'limit lots']) client.run(`slash(${q(wrong)})`);
+    for (const wrong of ['limit', 'limit 0.5', 'limit 9', 'limit 21', 'limit -1', 'limit lots']) client.run(`slash(${q(wrong)})`);
     expect(client.get('StoryLogDB.settings.limit')).toBe(5);
+    expect(client.printed()).toContain('with 1 to 8');
     client.run('slash("limit off")');
     expect(client.get('StoryLogDB.settings.limit')).toBe(0);
 
     const off = play({ StoryLog: MAIN.replace('0.005', '0') });
     expect(off.printed).toBe('');
     expect(off.files[A1]).toBeUndefined();
+
+    const large = new Client({ saved: 'StoryLogDB = { version = 1, settings = { limit = 20 } }' });
+    expect(large.get('StoryLogDB.settings.limit')).toBe(8);
+  });
+
+  it('take the log when it holds too many different strings and numbers, whatever its size', () => {
+    const { printed, files } = play({ StoryLog: MAIN.replace('0.005', '3') }, 'NS.LOG_CONSTANTS = 100');
+    expect(printed).toContain('the log is close to the most that the game can load, so 2 sessions were copied');
+    expect(sessionsIn(files[A1])).toEqual(['one', 'two']);
+  });
+
+  it.each([
+    ['is never split', '0', '/storylog limit 3 splits it'],
+    ['is split, but one long session holds too many', '3', '/reload, so that finished sessions can move'],
+  ])('warn in the status when the log %s', (_name, limit, advice) => {
+    const client = new Client({ saved: MAIN.replace('0.005', limit) }).login().run('NS.LOG_CONSTANTS = 100; slash("status")');
+    expect(client.printed()).toContain('The log is close to the most that the game can load.');
+    expect(client.printed()).toContain(advice);
+  });
+
+  it('say nothing of it while the log is well below', () => {
+    const client = new Client({ saved: MAIN.replace('0.005', '3') }).login().run('slash("status")');
+    expect(client.printed()).not.toContain('close to the most');
+  });
+
+  describe('from before there were twelve', () => {
+    /** Five full files, from when there were five, and the fifth in use. */
+    const FIVE = (() => {
+      const held = Array.from({ length: 5 }, () => '{ sessions = 1, lines = 1, bytes = 10 }').join(', ');
+      const files: Files = {
+        StoryLog: `${MAIN}\nStoryLogDB.archive = { volume = 5, held = { ${held} } }`,
+      };
+      for (let volume = 1; volume <= 5; volume++) {
+        files[`StoryLog_Archive${volume}`] =
+          `StoryLogArchive${volume}DB = { version = 1, sessions = { { id = "old${volume}", started = ${400 + volume}, messages = { { t = ${400 + volume}, e = "SAY", m = "old" } } } } }`;
+      }
+      return files;
+    })();
+
+    it('go on to the sixth file, and empty none', () => {
+      const next = play(FIVE, 'NS.VOLUME_BYTES = 1');
+      expect(next.printed).toContain('2 sessions were copied to StoryLog_Archive6.lua');
+      expect(next.printed).not.toContain('emptied');
+      expect(next.client.get('StoryLogDB.archive.volume')).toBe(6);
+      for (let volume = 1; volume <= 5; volume++) {
+        expect(sessionsIn(next.files[`StoryLog_Archive${volume}`] ?? FIVE[`StoryLog_Archive${volume}`])).not.toContain('one');
+      }
+    });
+
+    it('move nothing while the new files are not installed, and say which is missing', () => {
+      const missing = Array.from({ length: 7 }, (_, index) => `W.addons.StoryLog_Archive${index + 6} = nil`).join('; ');
+      const stuck = play(FIVE, `NS.VOLUME_BYTES = 1; ${missing}`);
+      expect(stuck.printed).toContain("StoryLog_Archive6 can't be used (MISSING)");
+      expect(stuck.client.get('StoryLogDB.archive.pending')).toBeNull();
+      expect(sessionsIn(stuck.files.StoryLog)).toEqual(expect.arrayContaining(['one', 'two']));
+    });
   });
 
   it('are sized by an estimate that is close to the real file', () => {

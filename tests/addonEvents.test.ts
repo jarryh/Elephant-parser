@@ -41,7 +41,7 @@ const RAG = '|cff9d9d9d|Hitem:4|h[Torn Rag]|h|r';
 describe('events', () => {
   it('are registered only when this client has them, and /storylog says which it lacks', () => {
     const client = new Client({ pre: 'NO_EVENT = { TRADE_SHOW = true, DUEL_REQUESTED = true }' }).login();
-    client.run('slash("")');
+    client.run('slash("status")');
     expect(client.printed()).toContain('Not on this client, so not recorded: DUEL_REQUESTED, TRADE_SHOW');
   });
 

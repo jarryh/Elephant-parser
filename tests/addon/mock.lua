@@ -33,7 +33,7 @@ W = {
   profiles = {}, status = {}, inbox = {}, spells = {}, mounts = {}, worn = {},
 }
 -- The archive add-ons are installed, and have saved nothing yet.
-for volume = 1, 5 do W.addons["StoryLog_Archive" .. volume] = {} end
+for volume = 1, 12 do W.addons["StoryLog_Archive" .. volume] = {} end
 
 -- With W.allSecret, everything the game is allowed to hide comes back hidden.
 local function out(...)
@@ -334,18 +334,247 @@ if CALENDAR then
   }
 end
 
+-- Frames, and what is drawn on them. Each kind has only the methods that the addon uses,
+-- so that a misspelt one fails here as it would in the game. Set before this file runs,
+-- NO_TEMPLATE = { name = true } and NO_METHOD = { name = true } take some away, as on a
+-- client that lacks them.
 local frames = {}
-function CreateFrame()
-  local frame = { events = {}, scripts = {} }
-  function frame:RegisterEvent(event)
+widgets = {}
+
+local function kind(base)
+  local methods = {}
+  for name, fn in pairs(base or {}) do methods[name] = fn end
+  return methods
+end
+local function add(methods, list)
+  for name, fn in pairs(list) do
+    if not (NO_METHOD and NO_METHOD[name]) then methods[name] = fn end
+  end
+end
+
+local REGION = kind()
+add(REGION, {
+  SetPoint = function(self, ...) self._points[#self._points + 1] = { ... } end,
+  ClearAllPoints = function(self) self._points = {} end,
+  SetAllPoints = function(self, other) self._points = { { "ALL", other } } end,
+  SetSize = function(self, width, height) self._width, self._height = width, height end,
+  SetWidth = function(self, width) self._width = width end,
+  SetHeight = function(self, height) self._height = height end,
+  GetHeight = function(self) return self._height or 0 end,
+  GetWidth = function(self) return self._width or 0 end,
+  IsShown = function(self) return self._shown end,
+  Show = function(self)
+    if self._shown then return end
+    self._shown = true
+    if self.scripts and self.scripts.OnShow then self.scripts.OnShow(self) end
+  end,
+  Hide = function(self)
+    if not self._shown then return end
+    self._shown = false
+    if self.scripts and self.scripts.OnHide then self.scripts.OnHide(self) end
+  end,
+})
+
+local TEXTURE = kind(REGION)
+add(TEXTURE, {
+  SetColorTexture = function(self, ...) self._color = { ... } end,
+  SetTexture = function(self, file) self._file = file end,
+  SetVertexColor = function(self, ...) self._color = { ... } end,
+  SetTexCoord = function() end,
+  SetDesaturated = function(self, grey) self._grey = grey and true or false end,
+})
+
+local FONT_STRING = kind(REGION)
+add(FONT_STRING, {
+  SetText = function(self, text) self._text = text end,
+  GetText = function(self) return self._text end,
+  SetJustifyH = function() end,
+  SetTextColor = function(self, ...) self._color = { ... } end,
+  -- One line of 12 pixels for each line of text, without wrapping.
+  GetStringHeight = function(self)
+    local _, breaks = tostring(self._text or ""):gsub("\n", "")
+    return 12 * (breaks + 1)
+  end,
+})
+
+local function region(methods, parent, kindName)
+  local made = setmetatable({ _kind = kindName, _points = {}, _shown = true, _parent = parent }, { __index = methods })
+  widgets[#widgets + 1] = made
+  return made
+end
+
+local FRAME = kind(REGION)
+add(FRAME, {
+  RegisterEvent = function(self, event)
     if NO_EVENT and NO_EVENT[event] then error("Attempt to register unknown event " .. event) end
     self.events[event] = true
+  end,
+  RegisterUnitEvent = function(self, event) return self:RegisterEvent(event) end,
+  UnregisterEvent = function(self, event) self.events[event] = nil end,
+  SetScript = function(self, script, handler) self.scripts[script] = handler end,
+  GetScript = function(self, script) return self.scripts[script] end,
+  GetName = function(self) return self._name end,
+  SetFrameStrata = function(self, strata) self._strata = strata end,
+  SetFrameLevel = function(self, level) self._level = level end,
+  GetCenter = function(self) return self._x, self._y end,
+  GetEffectiveScale = function(self) return self._scale or 1 end,
+  SetClampedToScreen = function() end,
+  SetToplevel = function() end,
+  EnableMouse = function() end,
+  SetMovable = function() end,
+  RegisterForDrag = function() end,
+  StartMoving = function() end,
+  StopMovingOrSizing = function() end,
+  CreateTexture = function(self) return region(TEXTURE, self, "Texture") end,
+  CreateFontString = function(self) return region(FONT_STRING, self, "FontString") end,
+})
+
+local BUTTON = kind(FRAME)
+add(BUTTON, {
+  Enable = function(self) self._enabled = true end,
+  Disable = function(self) self._enabled = false end,
+  IsEnabled = function(self) return self._enabled ~= false end,
+  SetHitRectInsets = function() end,
+  RegisterForClicks = function() end,
+  SetNormalTexture = function() end,
+  SetPushedTexture = function() end,
+  SetHighlightTexture = function() end,
+  -- As a click by the player: a disabled button does nothing.
+  Click = function(self, button)
+    if self._enabled == false then return end
+    if self._kind == "CheckButton" then self._checked = not self._checked end
+    if self.scripts.OnClick then self.scripts.OnClick(self, button or "LeftButton", false) end
+  end,
+})
+
+local CHECK_BUTTON = kind(BUTTON)
+add(CHECK_BUTTON, {
+  SetCheckedTexture = function() end,
+  SetChecked = function(self, checked) self._checked = checked and true or false end,
+  GetChecked = function(self) return self._checked == true end,
+})
+
+local KINDS = { Frame = FRAME, Button = BUTTON, CheckButton = CHECK_BUTTON }
+local TEMPLATES = { UICheckButtonTemplate = true, UIPanelCloseButton = true }
+
+function CreateFrame(kindName, name, parent, template)
+  local methods = KINDS[kindName or "Frame"]
+  if not methods then error("CreateFrame: unknown frame type '" .. tostring(kindName) .. "'") end
+  if template and (not TEMPLATES[template] or (NO_TEMPLATE and NO_TEMPLATE[template])) then
+    error("CreateFrame: Couldn't find inherited node '" .. template .. "'")
   end
-  function frame:RegisterUnitEvent(event) return self:RegisterEvent(event) end
-  function frame:UnregisterEvent(event) self.events[event] = nil end
-  function frame:SetScript(kind, handler) self.scripts[kind] = handler end
+  local frame = region(methods, parent, kindName or "Frame")
+  frame.events, frame.scripts, frame._name = {}, {}, name
+  if name then _G[name] = frame end
   frames[#frames + 1] = frame
   return frame
+end
+
+UIParent = CreateFrame("Frame", "UIParent")
+-- The windows that Escape closes, by name.
+UISpecialFrames = {}
+
+-- The minimap: 140 pixels across, its middle at (1000, 600) on the screen. Without
+-- NO_MINIMAP, set before this file runs.
+if not NO_MINIMAP then
+  Minimap = CreateFrame("Frame", "Minimap", UIParent)
+  Minimap:SetSize(140, 140)
+  Minimap._x, Minimap._y = 1000, 600
+end
+
+-- Where the mouse is, in pixels: W.cursor = { x, y }.
+function GetCursorPosition()
+  local cursor = W.cursor or { 0, 0 }
+  return cursor[1], cursor[2]
+end
+
+-- The game's tooltip. Its lines are kept for the tests.
+GameTooltip = setmetatable({ lines = {}, shown = false }, { __index = {
+  SetOwner = function(self, owner) self.owner, self.lines = owner, {} end,
+  SetText = function(self, text) self.lines = { text } end,
+  AddLine = function(self, text) self.lines[#self.lines + 1] = text end,
+  Show = function(self) self.shown = true end,
+  Hide = function(self) self.shown = false end,
+} })
+
+-- The icon at the minimap, as the player sees it: nil when there is none.
+function iconState()
+  local icon = NS.icon
+  if not icon then return nil end
+  local point = icon._points[1] or {}
+  return {
+    shown = icon._shown,
+    grey = icon.image._grey == true,
+    x = math.floor((point[4] or 0) * 10 + 0.5) / 10,
+    y = math.floor((point[5] or 0) * 10 + 0.5) / 10,
+  }
+end
+
+-- Drags the icon to where the mouse is, as the game would: OnUpdate runs while it moves.
+function dragIcon(x, y)
+  local icon = NS.icon
+  icon.scripts.OnDragStart(icon, "LeftButton")
+  W.cursor = { x, y }
+  icon.scripts.OnUpdate(icon, 0.016)
+  icon.scripts.OnDragStop(icon)
+end
+
+-- Seen on the screen: shown, and every parent shown too.
+local function visible(widget)
+  while widget do
+    if not widget._shown then return false end
+    widget = widget._parent
+  end
+  return true
+end
+
+-- The checkboxes that can be seen, in the order they were made.
+function checkboxes()
+  local list = {}
+  for _, widget in ipairs(widgets) do
+    if widget._kind == "CheckButton" and visible(widget) then
+      local caption = widget.caption
+      list[#list + 1] = {
+        label = caption and caption._text or "",
+        checked = widget._checked == true,
+        enabled = widget._enabled ~= false,
+      }
+    end
+  end
+  return list
+end
+
+-- Clicks the checkbox with this label, which must be seen.
+function click(label)
+  for _, widget in ipairs(widgets) do
+    if widget._kind == "CheckButton" and visible(widget) and widget.caption and widget.caption._text == label then
+      return widget:Click()
+    end
+  end
+  error("no checkbox labelled " .. label, 2)
+end
+
+-- The text that can be seen.
+function texts()
+  local list = {}
+  for _, widget in ipairs(widgets) do
+    if widget._kind == "FontString" and visible(widget) and widget._text and widget._text ~= "" then
+      list[#list + 1] = widget._text
+    end
+  end
+  return list
+end
+
+-- The channels the player is in: W.channels = { { 1, "General - Elwynn Forest" }, ... }.
+-- This client gives a third value for each, whether it is disabled.
+function GetChannelList()
+  local values = {}
+  for _, channel in ipairs(W.channels or {}) do
+    values[#values + 1] = channel[1]
+    values[#values + 1] = out(channel[2])
+    values[#values + 1] = channel[3] or false
+  end
+  return unpack(values, 1, #values)
 end
 function fire(event, ...)
   for _, frame in ipairs(frames) do

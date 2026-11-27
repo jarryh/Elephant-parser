@@ -114,7 +114,7 @@ describe('adding a file', () => {
 
   it('saves it byte for byte, lists it and serves it', async () => {
     const reply = await add('StoryLog.lua', STORYLOG_CRLF);
-    expect(JSON.parse(reply.body)).toEqual({ name: 'StoryLog.lua', kept: null, unchanged: false });
+    expect(JSON.parse(reply.body)).toEqual({ name: 'StoryLog.lua', kept: null, replaced: false, unchanged: false });
     expect((await readFile(inData('StoryLog.lua'))).equals(Buffer.from(STORYLOG_CRLF, 'utf8'))).toBe(true);
     expect(await names()).toEqual(['Elephant.lua', 'StoryLog.lua']);
 
@@ -184,7 +184,7 @@ describe('adding a file', () => {
   it('writes nothing when Data already holds exactly this file', async () => {
     await utimes(server.dataFile, noon, noon);
     const reply = await add('Elephant.lua', FIXTURE_CRLF);
-    expect(JSON.parse(reply.body)).toEqual({ name: 'Elephant.lua', kept: null, unchanged: true });
+    expect(JSON.parse(reply.body)).toEqual({ name: 'Elephant.lua', kept: null, replaced: false, unchanged: true });
     expect(await names()).toEqual(['Elephant.lua']);
     expect((await stat(server.dataFile)).mtimeMs).toBe(noon.getTime());
   });
@@ -195,7 +195,12 @@ describe('adding a file', () => {
     await server.send('PUT', '/api/files/Elephant.lua/workspace', edits);
 
     const reply = await add('Elephant.lua', NEWER);
-    expect(JSON.parse(reply.body)).toEqual({ name: 'Elephant.lua', kept: 'Elephant-2020-03-01.lua', unchanged: false });
+    expect(JSON.parse(reply.body)).toEqual({
+      name: 'Elephant.lua',
+      kept: 'Elephant-2020-03-01.lua',
+      replaced: true,
+      unchanged: false,
+    });
     expect(await names()).toEqual(['Elephant-2020-03-01.lua', 'Elephant.lua']);
     expect(await readFile(inData('Elephant-2020-03-01.lua'), 'utf8')).toBe(FIXTURE_CRLF);
     expect((await stat(inData('Elephant-2020-03-01.lua'))).mtimeMs).toBe(noon.getTime());
@@ -226,6 +231,69 @@ describe('adding a file', () => {
     expect(replies.map((reply) => reply.status)).toEqual([200, 200]);
     const contents = await Promise.all((await names()).map((name) => readFile(inData(name), 'utf8')));
     expect(contents.sort()).toEqual([FIXTURE_CRLF, NEWER, `${NEWER}\r\n`].sort());
+  });
+
+  describe('of StoryLog, which holds the older lines again', () => {
+    // The same sessions, saved again with other settings.
+    const resaved = STORYLOG_CRLF.replace('["limit"] = 3,', '["limit"] = 5,');
+    // Without the first session.
+    const list = '["sessions"] = {\r\n';
+    const from = STORYLOG_CRLF.indexOf(list) + list.length;
+    const pruned = STORYLOG_CRLF.slice(0, from) + STORYLOG_CRLF.slice(STORYLOG_CRLF.indexOf('{\r\n["id"] = "1898713700'));
+
+    const start = async (name: string, content: string) => {
+      await writeFile(inData(name), content);
+      await utimes(inData(name), noon, noon);
+    };
+
+    it.each(['StoryLog.lua', 'StoryLog_Archive1.lua'])('replaces %s without a copy when every line is still there', async (name) => {
+      const variable = name.replace('_', '').replace('.lua', 'DB');
+      await start(name, STORYLOG_CRLF.replace('StoryLogDB = {', `${variable} = {`));
+      const edits = { revision: 0, removed: ['abc123'], filters: NO_FILTERS };
+      await server.send('PUT', `/api/files/${name}/workspace`, edits);
+
+      const reply = await add(name, resaved.replace('StoryLogDB = {', `${variable} = {`));
+      expect(JSON.parse(reply.body)).toEqual({ name, kept: null, replaced: true, unchanged: false });
+      expect(await names()).toEqual(['Elephant.lua', name]);
+      expect(await readFile(inData(name), 'utf8')).toContain('["limit"] = 5,');
+      const saved = await server.send('GET', `/api/files/${name}/workspace`);
+      expect(JSON.parse(saved.body)).toMatchObject({ removed: ['abc123'] });
+    });
+
+    it('also when the older file was open, and its reading is remembered', async () => {
+      await start('StoryLog.lua', STORYLOG_CRLF);
+      await server.send('GET', '/api/files/StoryLog.lua');
+      expect(JSON.parse((await add('StoryLog.lua', resaved)).body)).toMatchObject({ kept: null, replaced: true });
+      const served = await server.send('GET', '/api/files/StoryLog.lua');
+      expect((JSON.parse(served.body) as LoadedFile).document).toEqual(parseLog(resaved));
+    });
+
+    it.each([
+      ['a session is missing', pruned],
+      ['a line was changed', STORYLOG_CRLF.replace('["m"] = "Again",', '["m"] = "Once more",')],
+      ['the new file is from Elephant', FIXTURE_CRLF],
+    ])('keeps the copy when %s', async (_name, content) => {
+      await start('StoryLog.lua', STORYLOG_CRLF);
+      const reply = await add('StoryLog.lua', content);
+      expect(JSON.parse(reply.body)).toEqual({
+        name: 'StoryLog.lua',
+        kept: 'StoryLog-2020-03-01.lua',
+        replaced: true,
+        unchanged: false,
+      });
+      expect(await readFile(inData('StoryLog-2020-03-01.lua'), 'utf8')).toBe(STORYLOG_CRLF);
+    });
+
+    it('keeps the copy of an older Elephant file', async () => {
+      await start('StoryLog.lua', FIXTURE_CRLF);
+      expect(JSON.parse((await add('StoryLog.lua', STORYLOG_CRLF)).body)).toMatchObject({ kept: 'StoryLog-2020-03-01.lua' });
+    });
+
+    it('keeps the copy of an older file that it cannot read', async () => {
+      await start('StoryLog.lua', 'StoryLogDB = {');
+      expect(JSON.parse((await add('StoryLog.lua', STORYLOG_CRLF)).body)).toMatchObject({ kept: 'StoryLog-2020-03-01.lua' });
+      expect(await readFile(inData('StoryLog-2020-03-01.lua'), 'utf8')).toBe('StoryLogDB = {');
+    });
   });
 
   it('takes another spelling of a name for the same file', async () => {

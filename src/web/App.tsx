@@ -142,7 +142,8 @@ export function App() {
     <div className="drop-overlay">
       <p>
         <strong>Drop to add to the Data folder</strong>
-        StoryLog.lua or Elephant.lua. A file of the same name is kept under a dated name.
+        StoryLog.lua or Elephant.lua. A file of the same name is kept under a dated name, unless the new
+        one holds all of it.
       </p>
     </div>
   );

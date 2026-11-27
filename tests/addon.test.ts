@@ -40,7 +40,7 @@ describe('the StoryLog addon', () => {
     const addons = new URL('../addon/', import.meta.url);
     const archives = readdirSync(addons).filter((name) => name.startsWith('StoryLog_Archive'));
     const count = Number(/local VOLUMES = (\d+)/.exec(read('Archive.lua'))![1]);
-    expect(archives).toEqual(Array.from({ length: count }, (_, index) => `StoryLog_Archive${index + 1}`));
+    expect([...archives].sort()).toEqual(Array.from({ length: count }, (_, index) => `StoryLog_Archive${index + 1}`).sort());
 
     for (const name of archives) {
       const lines = readFileSync(new URL(`${name}/${name}.toc`, addons), 'utf8').split(/\r?\n/);

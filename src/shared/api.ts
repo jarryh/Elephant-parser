@@ -23,6 +23,11 @@ export interface AddedFile {
   name: string;
   /** The dated name under which the file it replaced is kept. */
   kept: string | null;
+  /**
+   * It took the place of a file of that name. With `kept` null, the new file held every
+   * line of the older one, so no copy was needed.
+   */
+  replaced: boolean;
   /** Data/ already held exactly this file, so nothing was written. */
   unchanged: boolean;
 }

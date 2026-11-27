@@ -32,7 +32,9 @@ export async function addFiles(files: File[]): Promise<Added> {
       added.opened = saved.name;
       if (saved.unchanged) added.notes.push(`${saved.name} is already in Data, with the same content.`);
       else if (saved.kept) added.notes.push(`Replaced ${saved.name}. The older file is kept as ${saved.kept}.`);
-      else added.notes.push(`Added ${saved.name}.`);
+      else if (saved.replaced) {
+        added.notes.push(`Replaced ${saved.name}. It holds every line of the older file, so no copy was kept.`);
+      } else added.notes.push(`Added ${saved.name}.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       added.problems.push(message.includes(name) ? message : `${name}: ${message}`);

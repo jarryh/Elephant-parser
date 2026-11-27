@@ -40,6 +40,21 @@ interface Options {
 /** Saved files by add-on name, and `character` for the one that each character has. */
 export type Files = Record<string, string>;
 
+export interface Checkbox {
+  label: string;
+  checked: boolean;
+  enabled: boolean;
+}
+
+/** The icon at the minimap: shown or hidden, grey while not recording, and where. */
+export interface IconState {
+  shown: boolean;
+  grey: boolean;
+  /** Pixels from the middle of the minimap. */
+  x: number;
+  y: number;
+}
+
 export class Client {
   private readonly L = lauxlib.luaL_newstate();
   private readonly files: Files;
@@ -90,6 +105,26 @@ export class Client {
   /** Everything the addon wrote to the chat window. */
   printed(): string {
     return this.get<string[]>('W.printed').join('\n');
+  }
+
+  /** The checkboxes that can be seen in the addon's window, in the order they were made. */
+  checkboxes(): Checkbox[] {
+    return this.get<Checkbox[]>('checkboxes()');
+  }
+
+  /** Clicks the checkbox with this label, as the player would. */
+  click(label: string): this {
+    return this.run(`click(${q(label)})`);
+  }
+
+  /** The text that can be seen in the addon's window. */
+  texts(): string[] {
+    return this.get<string[]>('texts()');
+  }
+
+  /** The icon at the minimap, or null when there is none. */
+  icon(): IconState | null {
+    return this.get<IconState | null>('iconState()');
   }
 
   /** Logs out, and returns the file that the game would save. */

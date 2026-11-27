@@ -12,7 +12,8 @@ The app reads the logs of two addons:
 - [Elephant](https://www.curseforge.com/wow/addons/elephant)
 
 The app never edits a log. Adding a file saves a copy in the `Data` folder, and an older
-file of the same name is kept under a dated name.
+file of the same name is kept under a dated name, unless the new StoryLog file holds every
+line of it.
 
 ## Quick start
 
@@ -42,7 +43,9 @@ You need [Node.js](https://nodejs.org/) 20.9 or newer (20.x, or 22+).
 
 The app saves the file in a `Data` folder in this project. You can also copy files there
 yourself and press **Reload**. Choose between the files with the **File** menu at the top.
-StoryLog's archive files, `StoryLog_Archive1.lua` and so on, open in the same way.
+StoryLog's archive files, `StoryLog_Archive1.lua` and so on, open in the same way. Add
+them now and then: when all are full, StoryLog empties the one with the oldest sessions
+and warns you a file ahead (see [When the log grows](addon/README.md#when-the-log-grows)).
 
 ## Don't lose old logs
 
@@ -52,7 +55,10 @@ can lose an RP evening within a day.
 - In game, type `/elephant` to open the addon's options and raise **Max log lines** (up
   to 10,000). The setting is per realm and faction.
 - Add each newer file to the app. It keeps the one before as a dated copy, such as
-  `Elephant-2030-03-01.lua`, and nothing in `Data` is ever overwritten or deleted.
+  `Elephant-2030-03-01.lua`, and nothing in `Data` is ever deleted.
+- A StoryLog file that holds every line of the one before replaces it without a copy, as
+  a copy would only take space. A StoryLog file that lost lines, such as `StoryLog.lua`
+  after sessions moved to an archive file, keeps the copy.
 - The app lists every `.lua` file in `Data`, so the dated copies stay readable.
 
 ## Using it
