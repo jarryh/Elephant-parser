@@ -7,7 +7,8 @@ evening into a story with Claude.
 The app reads the logs of two addons:
 
 - [StoryLog](addon/README.md), this project's own addon, which also saves where each line
-  was said, who was in your group and which quests you took
+  was said, who was in your group, and what happened besides talking: trades, quests,
+  travel, fights, what NPCs said in their windows
 - [Elephant](https://www.curseforge.com/wow/addons/elephant)
 
 The app never edits a log. Adding a file saves a copy in the `Data` folder, and an older
@@ -62,7 +63,8 @@ The left panel filters by period, scene, place, character, channel, message type
 and text.
 All channels form one timeline, and a message that Elephant saved to several logs is
 shown once. **Roleplay types only** keeps speech, emotes, party, raid and NPC lines, dice
-rolls and quests.
+rolls, quests, and StoryLog's lines about what happened. Letters are private like
+whispers, so they are not among them: tick **Mail** under Channel to see them.
 
 ### Scenes and places
 
@@ -73,8 +75,9 @@ A scene is a stretch of one character's roleplay. A new one starts:
 - and when say, yell or an emote happens on another map, or more than 120 yards (twice
   earshot) from where the scene began. Party and raid chat don't move a scene.
 
-NPC lines and quests count in a scene only between players' lines. They don't start one,
-move it or keep it going.
+NPC lines, quests and what happened (a trade, a fight, a flight) count in a scene only
+between players' lines. They don't start one, move it or keep it going. Letters are no
+part of a scene.
 
 Choosing a scene sets the character, the period and the roleplay types, so the chat shows
 exactly its lines, and removing, exporting and Story all work on it. To see whispers or
@@ -84,15 +87,30 @@ game names a scene.
 With a StoryLog file you also get:
 
 - the place above the lines where it changes, a Place filter, and places in exports
-- roleplay names from Total RP 3
-- a line where your party or raid changes, and under each scene the members who were
-  there and said nothing
-- the quests you accepted and handed in, linked to Wowhead, under the channel **Quests**
+- roleplay names from Total RP 3, and `<OOC>` on lines said out of character
+- a line where your party or raid changes, saying who joined or left and who leads, and
+  under each scene the members who were there and said nothing
+- the quests you accepted and handed in, linked to Wowhead, under the channel **Quests**,
+  with what the quest giver said
+- what happened, each kind under a channel of its own:
+
+  | Channel          | Lines                                                         |
+  | ---------------- | ------------------------------------------------------------- |
+  | Group            | Invitations                                                   |
+  | Trades and items | Trades, with what each side gave; items looted, received, made |
+  | Mail             | Letters you sent or opened                                    |
+  | Travel           | Zones you entered, flights, summons                           |
+  | Fights           | Fights, boss fights, deaths, duels, new levels                |
+  | NPC text         | What NPCs said in their windows, your answers, books and plaques |
+  | Actions          | Spells and items you used out of combat, mounts, clothes      |
+
+  Letters, books and quest texts show their first lines under the line, and the rest
+  when you point at them.
 - a **Map** tab. A filled dot is where the speaker stood. A ring is where you stood when
   you heard them. It draws what was said nearby (say, yell, emotes, NPC speech, dice
-  rolls) and party or raid chat from members whose position is known. A quest is drawn
-  where you stood when you took it. Guild chat, whispers and channels reach you anywhere,
-  so they are not drawn.
+  rolls) and party or raid chat from members whose position is known. Quests and what
+  happened are drawn where you stood. Guild chat, whispers and channels reach you
+  anywhere, so they are not drawn.
 
 The map has a plain grid. For a background, save a picture of the whole map (3:2) as
 `Data/maps/<map id>.jpg`. The map's ID is shown in its menu.
@@ -146,6 +164,13 @@ Exports can contain whispers and BattleTags, so check before you share one.
 2. Switch back to the browser. A **Story** button appears.
 3. Select the scene with the filters, check the cost and write the story.
 
+With a StoryLog file, the story gets more than the chat: who joined or left the group,
+your notes, what happened (trades, fights, travel, what NPCs said), the time of day in the
+game world and the festivals, where party members spoke from when they were elsewhere,
+whom a line was addressed to, and what each character's Total RP 3 profile says about
+them. Lines said out of character are marked, and the story leaves them out. Grey items
+are left out, and letters go with whispers. A line you remove is not sent.
+
 Finished stories are also saved to `workspace/stories/`.
 
 The default model is `claude-opus-5-5`; set `ANTHROPIC_MODEL` to change it. If a safety
@@ -160,11 +185,12 @@ model and the app tells you.
   readable Elephant and StoryLog logs are accepted.
 - Nothing leaves your computer unless you click **Write story** or **Count exactly**.
   Both send only the text shown under "See exactly what will be sent".
-- Whispers, game notices and status flags are left out of stories by default, and
-  BattleTags are always masked. Character names and public chat are sent as they are.
-- With a StoryLog file, stories also get the places, your quests, and the roleplay name,
-  race and class of those who speak in the lines that are sent. Members of your party or
-  raid at that time are named too, even if they said nothing.
+- Whispers, letters, game notices and status flags are left out of stories by default,
+  and BattleTags are always masked. Character names and public chat are sent as they are.
+- With a StoryLog file, stories also get the places, your quests and what happened, and
+  for those who speak in the lines that are sent: their roleplay name, race, class, sex,
+  guild and what their Total RP 3 profile says. Members of your party or raid at that
+  time are named too, even if they said nothing.
 - Wowhead links are plain links: Wowhead sees nothing until you click one. Players are
   never looked up there.
 - The API key stays on the server. Only the key in `.env` is used.

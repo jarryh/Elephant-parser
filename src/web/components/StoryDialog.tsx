@@ -13,6 +13,7 @@ import {
   storyItems,
   type StoryOptions,
 } from '../../shared/story';
+import { isNpc } from '../../shared/format';
 import type { LogDocument, LogItem } from '../../shared/types';
 import { download } from '../download';
 import { countStoryTokens, generateStory } from '../storyApi';
@@ -28,6 +29,7 @@ const dollars = (value: number) => (value < 0.01 ? 'under $0.01' : `$${value.toF
 interface Props {
   model: string;
   doc: LogDocument;
+  /** The selection's messages, and StoryLog's notes and group changes among them. */
   messages: LogItem[];
   onClose: () => void;
 }
@@ -55,7 +57,7 @@ export function StoryDialog({ model, doc, messages, onClose }: Props) {
 
   const characters = useMemo(() => {
     const names = items.flatMap((item) =>
-      item.sender && !/^(?:MONSTER_|BN_|RAID_BOSS_)/.test(item.type) ? [item.rpName ?? item.sender] : [],
+      item.sender && !isNpc(item) && !item.type.startsWith('BN_') ? [item.rpName ?? item.sender] : [],
     );
     const ownNames = new Map(items.flatMap((item) => (item.self && item.rpName ? [[item.owner, item.rpName]] : [])));
     return [...new Set([...items.map((item) => ownNames.get(item.owner) ?? item.owner), ...names])];
@@ -195,7 +197,7 @@ export function StoryDialog({ model, doc, messages, onClose }: Props) {
         <div className="choices">
           <label>
             <input type="checkbox" checked={whispers} onChange={(event) => setWhispers(event.target.checked)} />
-            Include whispers ({privateCount})
+            Include whispers and letters ({privateCount})
           </label>
           <label>
             <input type="checkbox" checked={notices} onChange={(event) => setNotices(event.target.checked)} />
@@ -206,7 +208,7 @@ export function StoryDialog({ model, doc, messages, onClose }: Props) {
 
       <div className="cost" aria-live="polite">
         <p>
-          <strong>{items.length}</strong> of {messages.length} selected messages will be sent to Anthropic (
+          <strong>{items.length}</strong> of {messages.length} selected lines will be sent to Anthropic (
           <code>{model}</code>).
         </p>
         <p>

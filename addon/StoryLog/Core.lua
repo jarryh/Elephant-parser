@@ -43,21 +43,35 @@ local function finite(value)
 	end
 end
 
+-- Text of at most `bytes` bytes, cut where a character begins, so that no half of one is saved.
+local function clip(text, bytes)
+	text = filled(text)
+	if not text or #text <= bytes then return text end
+	local cut = bytes
+	-- Bytes 128 to 191 continue a character.
+	while cut > 0 and text:byte(cut + 1) and text:byte(cut + 1) >= 128 and text:byte(cut + 1) < 192 do cut = cut - 1 end
+	return text:sub(1, cut) .. "…"
+end
+
 local function say(message)
 	print("|cffa99cf0StoryLog:|r " .. message)
 end
 
-ns.safe, ns.try, ns.filled, ns.finite, ns.say = safe, try, filled, finite, say
+ns.safe, ns.try, ns.filled, ns.finite, ns.say, ns.clip = safe, try, filled, finite, say, clip
 ns.VERSION, ns.DEFAULT_LIMIT = VERSION, DEFAULT_LIMIT
 
 --------------------------------------------------------------------------------
 -- What is recorded
 
-ns.CATEGORIES = { "speech", "rolls", "guild", "channels", "notices", "group", "quests" }
+ns.CATEGORIES = {
+	"speech", "rolls", "guild", "channels", "notices", "group", "quests",
+	"items", "travel", "combat", "npc", "actions", "profiles",
+}
 
 local DEFAULTS = {
 	recording = true, speech = true, rolls = true, guild = true, channels = false, notices = false,
 	group = true, quests = true,
+	items = true, travel = true, combat = true, npc = true, actions = true, profiles = true,
 }
 
 local EVENTS = {
@@ -99,16 +113,206 @@ local NO_SPEAKER = {
 	BG_SYSTEM_ALLIANCE = true, BG_SYSTEM_HORDE = true, BG_SYSTEM_NEUTRAL = true,
 }
 
--- When the recorder says these, their target is probably whom they mean.
+-- When these are said, the speaker's target is probably whom they mean.
 local ADDRESSED = { SAY = true, YELL = true, EMOTE = true, TEXT_EMOTE = true }
 
--- These are not chat. Only your own quests can be seen.
-local QUEST_EVENTS = { QUEST_ACCEPTED = true, QUEST_TURNED_IN = true }
+-- A session with only these lines in it was not worth one.
+local PASSING = { GROUP = true, ZONE = true }
+
+--------------------------------------------------------------------------------
+-- Events
+--
+-- Every module adds its handlers with `ns.on`. They are registered at login, and only
+-- when this client has the event: registering one that it lacks is an error, and some
+-- that it has are forbidden to add-ons, so nothing is ever tried blindly.
+
+local frame = CreateFrame("Frame")
+local handlers = {}
+-- Events that are only wanted for one unit, such as the player's own spells.
+local unitOf = {}
+local registered = {}
+ns.missing = {}
+
+function ns.on(event, handler, unit)
+	local list = handlers[event]
+	if not list then
+		list = {}
+		handlers[event] = list
+	end
+	list[#list + 1] = handler
+	unitOf[event] = unit
+end
+
+local function register(event)
+	if registered[event] then return end
+	local valid = C_EventUtils and C_EventUtils.IsEventValid
+	if type(valid) == "function" and try(valid, event) == false then
+		ns.missing[#ns.missing + 1] = event
+		return
+	end
+	local unit = unitOf[event]
+	local done = unit and type(frame.RegisterUnitEvent) == "function" and pcall(frame.RegisterUnitEvent, frame, event, unit)
+	if done or pcall(frame.RegisterEvent, frame, event) then
+		registered[event] = true
+	else
+		ns.missing[#ns.missing + 1] = event
+	end
+end
+
+-- The game hides add-on errors unless the player turns them on, so a failure must be
+-- counted and reported here, or lines would go missing unnoticed.
+local failures = { count = 0 }
+ns.failures = failures
+
+local function failed(problem)
+	failures.count = failures.count + 1
+	if failures.count > 1 then return end
+	failures.first = tostring(problem)
+	local function tell() say("something could not be recorded in full. /storylog shows the error.") end
+	-- Not now: printing from inside one of the game's own functions taints the chat window.
+	if not (C_Timer and type(C_Timer.After) == "function" and pcall(C_Timer.After, 0, tell)) then tell() end
+end
+
+ns.failed = failed
+
+-- Runs a function after a while, unless this client has no timers. An error must not
+-- reach the game, which would hide it.
+function ns.after(seconds, fn)
+	if not C_Timer or type(C_Timer.After) ~= "function" then return false end
+	local ok = pcall(C_Timer.After, seconds, function()
+		local fine, problem = pcall(fn)
+		if not fine then failed(problem) end
+	end)
+	return ok
+end
+
+-- Runs `fn` after one of the game's own functions, given by its name or by its table
+-- and name. A hook only stores what it sees. True if it is in place.
+function ns.hook(owner, name, fn)
+	if type(hooksecurefunc) ~= "function" then return false end
+	if type(owner) == "string" then
+		owner, name, fn = nil, owner, name
+		if type(_G[name]) ~= "function" then return false end
+	elseif type(owner) ~= "table" or type(owner[name]) ~= "function" then
+		return false
+	end
+	local wrapped = function(...)
+		local ok, problem = pcall(fn, ...)
+		if not ok then failed(problem) end
+	end
+	if owner then return (pcall(hooksecurefunc, owner, name, wrapped)) end
+	return (pcall(hooksecurefunc, name, wrapped))
+end
+
+-- True when this client has the event, and it is registered.
+function ns.has(event)
+	return registered[event] == true
+end
+
+--------------------------------------------------------------------------------
+-- The game's wording
+--
+-- Much of what happens is told only as a line of system text: "You have invited Borin
+-- to join your group." The client has each wording as a format string in its own
+-- language, which becomes a pattern here.
+
+-- A pattern that matches what `format` makes, and the argument that each capture holds.
+function ns.pattern(format)
+	if type(format) ~= "string" or format == "" then return nil end
+	local parts, order, position, i = { "^" }, {}, 0, 1
+	while i <= #format do
+		local _, finish, index, kind = format:find("^%%(%d?)%$?([sd])", i)
+		if finish then
+			position = position + 1
+			order[#order + 1] = tonumber(index) or position
+			parts[#parts + 1] = kind == "s" and "(.-)" or "(%-?%d+)"
+			i = finish + 1
+		else
+			local char = format:sub(i, i)
+			if char == "%" and format:sub(i + 1, i + 1) == "%" then i = i + 1 end
+			parts[#parts + 1] = (char:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
+			i = i + 1
+		end
+	end
+	parts[#parts + 1] = "$"
+	return table.concat(parts), order
+end
+
+-- The values that `format` filled in to make `text`, by argument number. Nil when it
+-- didn't make it, including when a pattern from another language is one Lua rejects.
+local function captures(text, pattern, order)
+	local found = { pcall(string.match, text, pattern) }
+	if not found[1] or found[2] == nil then return nil end
+	local values, count = {}, 0
+	for i, argument in ipairs(order) do
+		values[argument] = found[i + 1]
+		if argument > count then count = argument end
+	end
+	return values, count
+end
+
+local wordings = {}
+
+-- Says that a line of `chatType` in the wording of the global string `name` means
+-- something to the `category`. `handle` gets what was filled in, and the line is not
+-- saved as a notice too.
+function ns.wording(chatType, name, category, handle)
+	local list = wordings[chatType]
+	if not list then
+		list = {}
+		wordings[chatType] = list
+	end
+	list[#list + 1] = { name = name, category = category, handle = handle }
+end
+
+-- "%s rolls %d (%d-%d)", in the client's language.
+local ROLL, ROLL_ORDER
+
+-- At login, not while this file loads: a wording that the game hides must not stop the add-on.
+local function learnWordings()
+	ROLL, ROLL_ORDER = ns.pattern(safe(RANDOM_ROLL_RESULT))
+	for _, list in pairs(wordings) do
+		for _, wording in ipairs(list) do
+			wording.pattern, wording.order = ns.pattern(safe(_G[wording.name]))
+		end
+	end
+end
+
+local function listening(chatType, settings)
+	for _, wording in ipairs(wordings[chatType] or {}) do
+		if settings[wording.category] then return true end
+	end
+	return false
+end
+
+-- True when the text is in one of the wordings, which has dealt with it.
+local function heard(chatType, text, settings)
+	for _, wording in ipairs(wordings[chatType] or {}) do
+		if wording.pattern and settings[wording.category] then
+			local values, count = captures(text, wording.pattern, wording.order)
+			if values then
+				local ok, problem = pcall(wording.handle, unpack(values, 1, count))
+				if not ok then failed(problem) end
+				return true
+			end
+		end
+	end
+	return false
+end
+
+-- The name of a player in a line of system text, which may be a link to them.
+function ns.plainName(text)
+	text = filled(text)
+	if not text then return nil end
+	text = text:gsub("|H.-|h(.-)|h", "%1"):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+	return filled(text:match("^%[(.*)%]$") or text)
+end
 
 --------------------------------------------------------------------------------
 -- Names
 
 local me = {}
+ns.me = me
 local regional = false
 
 -- A player's name as it is saved: "First Surname" in WoW Forever, "Name-Realm" elsewhere.
@@ -122,6 +326,8 @@ local function qualify(name)
 	if name:find("-", 1, true) then return name end
 	return name .. suffix
 end
+
+ns.qualify = qualify
 
 local function unitPlayerName(unit)
 	local name, second = try(UnitNameUnmodified or UnitName, unit)
@@ -138,39 +344,13 @@ local function unitPlayerName(unit)
 	return qualify(name)
 end
 
--- The roleplay name from Total RP 3, when there is one.
-local function roleplayName(name, isSelf)
-	local api = AddOn_TotalRP3
-	local Player = api and api.Player
-	if not Player then return nil end
-
-	local rp = filled(try(function()
-		local player = isSelf and Player.GetCurrentUser() or Player.static.CreateFromCharacterID(name)
-		return player:GetFullName()
-	end))
-	if not rp then return nil end
-	-- A default profile just repeats the character's name.
-	if rp == name or rp == name:match("^([^%-]+)") then return nil end
-	return rp
-end
-
--- "%s rolls %d (%d-%d)", in the client's language, as a pattern that captures the name.
-local function rollPattern(format)
-	if type(format) ~= "string" then return nil end
-	local pattern = format:gsub("%%%d?%$?s", "\1"):gsub("%%%d?%$?d", "\2")
-	pattern = pattern:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0")
-	pattern = pattern:gsub("\1", "(.+)"):gsub("\2", "%%d+")
-	return "^" .. pattern .. "$"
-end
-
-local ROLL = rollPattern(RANDOM_ROLL_RESULT)
-
 --------------------------------------------------------------------------------
 -- The session
 
 local speakerByKey = {}
 
--- The index of a speaker in this session's list.
+-- The index of a speaker in this session's list, and their roleplay status from Total
+-- RP 3: 1 in character, 2 out of character.
 local function speakerIndex(name, guid, npc)
 	local speakers = ns.session.speakers
 	local npcID
@@ -202,27 +382,70 @@ local function speakerIndex(name, guid, npc)
 		end
 	end
 
-	-- Looked up every time, because profiles arrive late. A changed name gets a new
-	-- entry, so that earlier lines keep the name they were said under.
-	local rp = roleplayName(name, name == me.name)
-	if rp and rp ~= speaker.rp then
-		if speaker.rp then
-			index = #speakers + 1
-			speakers[index] = { name = name, guid = speaker.guid, class = speaker.class, race = speaker.race, sex = speaker.sex }
-			speakerByKey[key] = index
-		end
-		speakers[index].rp = rp
+	-- Looked up every time, because profiles arrive late. A changed name or "currently",
+	-- or a "currently" that was taken away, gets a new entry, so that earlier lines keep
+	-- what was true when they were said.
+	local rp, status, details = ns.profileOf(name, speaker.guid, name == me.name)
+	local doing = details and details.now
+	local renamed = rp and speaker.rp and rp ~= speaker.rp
+	local moved = speaker.now and details and ((doing and doing ~= speaker.now) or (details.read and not doing))
+	if renamed or moved then
+		local copy = {}
+		for field, value in pairs(speaker) do copy[field] = value end
+		index = #speakers + 1
+		speakers[index] = copy
+		speakerByKey[key] = index
+		speaker = copy
 	end
-	return index
+	if rp then speaker.rp = rp end
+	if details then
+		for _, field in ipairs(ns.DETAILS) do
+			local value = details[field]
+			if value ~= nil then
+				speaker[field] = value
+			elseif details.read and field ~= "guild" then
+				-- Their player removed it. A guild can also come from the game, which shows it
+				-- only while they are in the group or targeted, so that one is kept.
+				speaker[field] = nil
+			end
+		end
+	end
+	return index, status
 end
 
 local function add(message)
 	local messages = ns.session.messages
 	messages[#messages + 1] = message
+	return message
 end
 
 local function now()
 	return GetServerTime()
+end
+
+-- True while lines of that category are recorded.
+function ns.recording(category)
+	local settings = ns.db and ns.db.settings
+	return ns.session ~= nil and settings ~= nil and settings.recording == true and settings[category] == true
+end
+
+-- Saves a line about something that happened. `fields` are the line's own; `s` is the
+-- one who did it, the recorder unless it says otherwise, and `false` for nobody.
+-- Nil while that category is not recorded.
+function ns.event(category, event, fields)
+	if not ns.recording(category) then return nil end
+	local message = fields or {}
+	local who = message.s
+	message.t, message.e, message.s = now(), event, nil
+	add(message)
+	-- What follows can fail: the line is saved already.
+	local ok, problem = pcall(function()
+		if not message.p then message.p = ns.playerPlace() end
+		if who == nil then who = speakerIndex(me.name, me.guid, false) end
+		message.s = who or nil
+	end)
+	if not ok then failed(problem) end
+	return message
 end
 
 local function recordHidden()
@@ -235,29 +458,18 @@ local function recordHidden()
 	end
 end
 
-local function targetOfPlayer()
-	local guid = filled(try(UnitGUID, "target"))
-	if not guid or guid == me.guid then return nil end
+-- The speaker index of whoever `unit` is, unless that is the one with the GUID `except`.
+local function unitSpeaker(unit, except)
+	local guid = filled(try(UnitGUID, unit))
+	if not guid or guid == except then return nil end
 
 	if guid:find("^Player%-") then
-		local name = unitPlayerName("target")
-		return name and speakerIndex(name, guid, false)
-	elseif guid:find("^Creature%-") or guid:find("^Vehicle%-") then
-		local name = filled((try(UnitName, "target")))
-		return name and speakerIndex(name, guid, true)
+		local name = guid == me.guid and me.name or unitPlayerName(unit)
+		return name and (speakerIndex(name, guid, false))
+	elseif guid:find("^Creature%-") or guid:find("^Vehicle%-") or guid:find("^GameObject%-") then
+		local name = filled((try(UnitName, unit)))
+		return name and (speakerIndex(name, guid, true))
 	end
-end
-
--- The game hides add-on errors unless the player turns them on, so a failure must be
--- counted and reported here, or lines would go missing unnoticed.
-local failures = { count = 0 }
-ns.failures = failures
-
-local function failed(problem)
-	failures.count = failures.count + 1
-	if failures.count > 1 then return end
-	failures.first = tostring(problem)
-	say("a chat line could not be recorded in full. /storylog shows the error.")
 end
 
 -- Adds who said it and where. The text is already saved when this runs, so whatever
@@ -279,14 +491,21 @@ local function describe(message, sender, guid, ...)
 		local isSelf = not npc and (name == me.name or (guid ~= nil and guid == me.guid))
 		if isSelf then name, guid = me.name, me.guid end
 
-		message.s = speakerIndex(name, guid, npc)
+		local index, status = speakerIndex(name, guid, npc)
+		message.s = index
+		if status == 2 and ns.db.settings.profiles then message.ooc = true end
 
 		if isSelf then
-			if ADDRESSED[event] then message.to = targetOfPlayer() end
+			if ADDRESSED[event] then message.to = unitSpeaker("target", me.guid) end
 		elseif not npc and event ~= "WHISPER_INFORM" then
 			-- A roll has no GUID, but the speaker may be known from earlier lines.
-			local id = guid or ns.session.speakers[message.s].guid
-			if id then message.sp = ns.memberPlace(id) end
+			local id = guid or ns.session.speakers[index].guid
+			if id then
+				message.sp = ns.memberPlace(id)
+				-- Whom a group member had targeted, which the game shows for them only.
+				local unit = ADDRESSED[event] and ns.memberUnit(id)
+				if unit then message.to = unitSpeaker(unit .. "target", id) end
+			end
 		end
 	end
 
@@ -303,7 +522,9 @@ local function record(chatType, ...)
 	if not settings.recording then return end
 
 	local isSystem = chatType == "SYSTEM"
-	if not settings[category] and not (isSystem and settings.rolls) then return end
+	local rolls = isSystem and settings.rolls
+	local listened = listening(chatType, settings)
+	if not settings[category] and not rolls and not listened then return end
 
 	local rawText, rawSender, _, _, _, _, _, _, _, _, _, rawGUID = ...
 	if issecret(rawText) then
@@ -317,30 +538,18 @@ local function record(chatType, ...)
 	local sender, guid = filled(safe(rawSender)), filled(safe(rawGUID))
 
 	local event = chatType
-	if isSystem then
-		local roller
-		if settings.rolls and ROLL then
-			-- A pattern built from another language's wording could be one that Lua rejects.
-			local ok, name = pcall(string.match, text, ROLL)
-			roller = ok and name or nil
-		end
-		if roller then
-			event, sender, guid = "ROLL", roller, nil
-		elseif not settings.notices then
-			return
-		end
+	if rolls and ROLL then
+		local values = captures(text, ROLL, ROLL_ORDER)
+		local roller = values and filled(values[1])
+		if roller then event, sender, guid = "ROLL", roller, nil end
+	end
+	if event == chatType then
+		if listened and heard(chatType, text, settings) then return end
+		if not settings[category] then return end
 	end
 
-	local message = { t = now(), e = event, m = text }
-	add(message)
-
+	local message = add({ t = now(), e = event, m = text })
 	local ok, problem = pcall(describe, message, sender, guid, ...)
-	if not ok then failed(problem) end
-end
-
--- Called for every chat event. An error must not reach the game: it would be hidden.
-local function onChat(chatType, ...)
-	local ok, problem = pcall(record, chatType, ...)
 	if not ok then failed(problem) end
 end
 
@@ -384,7 +593,8 @@ local function questTitle(id)
 	return log and filled(try(log.GetTitleForQuestID, id)) or nil
 end
 
--- Adds the title, the place and the quest's NPC. The line is already saved.
+-- Adds the title, the place, the quest's NPC and what the NPC said about it. The line
+-- is already saved.
 local function describeQuest(message)
 	message.p = ns.playerPlace()
 	message.m = questTitle(message.q)
@@ -396,6 +606,9 @@ local function describeQuest(message)
 		local name = filled((try(UnitName, "npc")))
 		if name then message.to = speakerIndex(name, guid, true) end
 	end
+
+	local said = ns.questWords(message.e, message.q, message.m)
+	if said then message.text, message.goal = said.text, said.goal end
 end
 
 local function recordQuest(event, first, second)
@@ -416,30 +629,24 @@ local function recordQuest(event, first, second)
 	local settings = ns.db.settings
 	if not settings.recording or not settings.quests then return end
 
-	local message = { t = now(), e = event, q = id }
-	add(message)
+	local message = add({ t = now(), e = event, q = id })
 
 	local ok, problem = pcall(describeQuest, message)
 	if not ok then failed(problem) end
 
 	-- The title of a quest that the game has not loaded yet arrives a moment later.
-	if not message.m and C_Timer then
-		try(C_Timer.After, 1, function()
+	if not message.m then
+		ns.after(1, function()
 			if not message.m then message.m = questTitle(id) end
 		end)
 	end
-end
-
-local function onQuest(event, ...)
-	local ok, problem = pcall(recordQuest, event, ...)
-	if not ok then failed(problem) end
 end
 
 function ns.note(text)
 	add({ t = now(), e = "NOTE", m = text, p = ns.playerPlace() })
 end
 
-ns.add, ns.now, ns.speakerIndex, ns.unitPlayerName = add, now, speakerIndex, unitPlayerName
+ns.add, ns.now, ns.speakerIndex, ns.unitPlayerName, ns.unitSpeaker = add, now, speakerIndex, unitPlayerName, unitSpeaker
 
 function ns.lineCount()
 	local count = 0
@@ -450,8 +657,53 @@ function ns.lineCount()
 end
 
 function ns.ownRoleplayName()
-	return roleplayName(me.name, true)
+	return (ns.profileOf(me.name, me.guid, true))
 end
+
+--------------------------------------------------------------------------------
+-- Time and festivals
+
+-- The game world's time, in minutes after midnight. Not the server's clock.
+local function gameMinutes()
+	local hour, minute = try(GetGameTime)
+	hour, minute = finite(hour), finite(minute)
+	if not hour or not minute or hour < 0 or hour > 23 or minute < 0 or minute > 59 then return nil end
+	return hour * 60 + minute
+end
+
+-- The festivals of today, which the game knows only once the calendar has been read.
+-- Until then it says that there are none, so finding none is no answer.
+local function readHolidays()
+	local session, calendar = ns.session, C_Calendar
+	if not session or session.holidays or not calendar or not ns.db.settings.recording then return end
+
+	local today = C_DateAndTime and try(C_DateAndTime.GetCurrentCalendarTime)
+	local day = type(today) == "table" and finite(safe(today.monthDay))
+	if not day then return end
+	-- The calendar shows the month that was last looked at.
+	local shownMonth = try(calendar.GetMonthInfo, 0)
+	if type(shownMonth) == "table" and (safe(shownMonth.month) ~= safe(today.month) or safe(shownMonth.year) ~= safe(today.year)) then
+		return
+	end
+
+	local count = finite(try(calendar.GetNumDayEvents, 0, day))
+	if not count then return end
+	local names, seen = {}, {}
+	for index = 1, math.min(count, 20) do
+		local info = try(calendar.GetDayEvent, 0, day, index)
+		local title = type(info) == "table" and filled(safe(info.title))
+		if title and safe(info.calendarType) == "HOLIDAY" and not seen[title] then
+			seen[title] = true
+			names[#names + 1] = clip(title, 80)
+		end
+	end
+	if #names > 0 then session.holidays = names end
+end
+
+ns.on("CALENDAR_UPDATE_EVENT_LIST", readHolidays)
+
+--------------------------------------------------------------------------------
+-- Sessions
 
 local function startSession()
 	regional = try(RegionalUniqueNamesEnabled) == true
@@ -466,6 +718,7 @@ local function startSession()
 		guid = me.guid,
 		realm = not regional and me.realm or nil,
 		started = started,
+		clock = gameMinutes(),
 		interface = finite((select(4, GetBuildInfo()))),
 		locale = GetLocale(),
 		language = filled((try(GetDefaultLanguage, "player"))),
@@ -475,19 +728,23 @@ local function startSession()
 	}
 	local sessions = ns.db.sessions
 	sessions[#sessions + 1] = ns.session
+
+	readHolidays()
+	-- Asks the server for the calendar, which answers with CALENDAR_UPDATE_EVENT_LIST.
+	if C_Calendar then try(C_Calendar.OpenCalendar) end
 end
 
 local function endSession()
 	local session, sessions = ns.session, ns.db.sessions
-	-- Being in a group is not worth a session of its own.
-	local said = false
+	-- Being in a group, or walking about, is not worth a session of its own.
+	local happened = false
 	for _, message in ipairs(session.messages) do
-		if message.e ~= "GROUP" then
-			said = true
+		if not PASSING[message.e] then
+			happened = true
 			break
 		end
 	end
-	if said then
+	if happened then
 		session.ended = now()
 		return
 	end
@@ -497,9 +754,7 @@ local function endSession()
 end
 
 --------------------------------------------------------------------------------
--- Events
-
-local frame = CreateFrame("Frame")
+-- Loading
 
 local function loadDatabase()
 	local db = StoryLogDB
@@ -523,6 +778,19 @@ local function loadDatabase()
 	ns.db = db
 end
 
+for chatType in pairs(categoryOf) do
+	ns.on("CHAT_MSG_" .. chatType, function(...) record(chatType, ...) end)
+end
+ns.on("QUEST_ACCEPTED", function(...) recordQuest("QUEST_ACCEPTED", ...) end)
+ns.on("QUEST_TURNED_IN", function(...) recordQuest("QUEST_TURNED_IN", ...) end)
+-- The quest log is read again each time, as it may not be there yet at login.
+local function lookAround()
+	ns.updateRoster()
+	scanQuests()
+end
+ns.on("GROUP_ROSTER_UPDATE", lookAround)
+ns.on("PLAYER_ENTERING_WORLD", lookAround)
+
 local function onLogin()
 	if ns.blocked then
 		say("the saved log was made by a newer StoryLog, so nothing is recorded. Update the add-on.")
@@ -538,22 +806,25 @@ local function onLogin()
 	local ok, problem = pcall(ns.archiveAtLogin)
 	if not ok then say("the log could not be split: " .. tostring(problem)) end
 
+	learnWordings()
 	startSession()
 	ns.updateRoster()
 	scanQuests()
+	for _, start in ipairs(ns.starters) do
+		local fine, trouble = pcall(start)
+		if not fine then failed(trouble) end
+	end
 
-	for chatType in pairs(categoryOf) do
-		-- Not every client has every event.
-		pcall(frame.RegisterEvent, frame, "CHAT_MSG_" .. chatType)
-	end
-	for event in pairs(QUEST_EVENTS) do
-		pcall(frame.RegisterEvent, frame, event)
-	end
-	frame:RegisterEvent("GROUP_ROSTER_UPDATE")
-	frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+	for event in pairs(handlers) do register(event) end
 	frame:RegisterEvent("PLAYER_LOGOUT")
 
 	if not ns.db.settings.recording then say("recording is off. /storylog on starts it.") end
+end
+
+-- What the other modules want done at login, once the session exists.
+ns.starters = {}
+function ns.atLogin(fn)
+	ns.starters[#ns.starters + 1] = fn
 end
 
 frame:SetScript("OnEvent", function(_, event, ...)
@@ -572,13 +843,12 @@ frame:SetScript("OnEvent", function(_, event, ...)
 	elseif event == "PLAYER_LOGOUT" then
 		endSession()
 		StoryLogCharDB = { saved = true }
-	elseif event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
-		ns.updateRoster()
-		scanQuests()
-	elseif QUEST_EVENTS[event] then
-		onQuest(event, ...)
 	else
-		onChat(event:sub(10), ...)
+		-- An error must not reach the game: it would be hidden.
+		for _, handler in ipairs(handlers[event] or {}) do
+			local ok, problem = pcall(handler, ...)
+			if not ok then failed(problem) end
+		end
 	end
 end)
 

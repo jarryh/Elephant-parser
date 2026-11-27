@@ -9,7 +9,8 @@ export function plainLine(item: LogItem, clock: Clock): string {
   const who = speaker(item);
   const flag = item.flag ? `<${item.flag}> ` : '';
   const name = who ? who.before + who.name + who.after : '';
-  return `[${clock.time(item.at)}] [${lineTag(item)}] ${flag}${name}${item.text.replace(/\r?\n/g, '\n    ')}`;
+  const detail = item.detail ? `\n${item.detail}` : '';
+  return `[${clock.time(item.at)}] [${lineTag(item)}] ${flag}${name}${(item.text + detail).replace(/\r?\n/g, '\n    ')}`;
 }
 
 function byDay(items: LogItem[], clock: Clock): Map<string, LogItem[]> {
@@ -64,7 +65,7 @@ export function exportMarkdown(
   const line = (item: LogItem) => {
     const who = speaker(item);
     const name = who ? `${escapeMarkdown(who.before)}**${escapeMarkdown(who.name)}**${escapeMarkdown(who.after)}` : '';
-    const text = escapeMarkdown(item.text).replace(/\r?\n/g, '<br>');
+    const text = escapeMarkdown(item.text + (item.detail ? `\n${item.detail}` : '')).replace(/\r?\n/g, '<br>');
     const group = change(item);
     const company = group === null ? '' : `- *Group* ${escapeMarkdown(group || 'none')}\n`;
     return `${company}- \`${clock.time(item.at)}\` *${escapeMarkdown(lineTag(item))}* ${name}${text}`;
@@ -108,6 +109,8 @@ export function exportJson(
     group: item.group === undefined ? undefined : memberNames(groups?.[item.group], speakers),
     raid: (item.group !== undefined && groups?.[item.group]?.raid) || undefined,
     questId: item.quest,
+    detail: item.detail,
+    outOfCharacter: item.ooc,
   }));
   return `${JSON.stringify({ messages }, null, 2)}\n`;
 }

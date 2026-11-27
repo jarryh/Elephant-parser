@@ -208,6 +208,8 @@ describe('raw Lua line index', () => {
 
 describe('a StoryLog file', () => {
   const showStory = (story: AppConfig['story'] = null) => show({ filters: NO_FILTERS }, story, storyDoc);
+  /** The first evenings, where the map tests stand. The last session is a day on the road elsewhere. */
+  const evenings = { ...storyDoc, items: storyDoc.items.filter((item) => item.at < 1898900000) };
 
   it('shows the place where it changes', () => {
     showStory();
@@ -216,12 +218,25 @@ describe('a StoryLog file', () => {
       'The Stockade',
       "Elwynn Forest, Goldshire, Lion's Pride Inn",
       'Dun Morogh',
+      'Elwynn Forest, Goldshire',
+      'Westfall, Sentinel Hill',
+      'Stormwind City, Trade District',
     ]);
+  });
+
+  it('shows what happened, with the long text of a line under it', () => {
+    showStory();
+    expect(line('Traded with Borin Ironvow').textContent).toContain('[Trade] Traded with Borin Ironvow: gave 15s; got [Linen Cloth] ×5');
+    expect(within(line('Read “A Weathered Plaque”')).getByText('Here stood the old mill.').className).toBe('detail');
+    expect(line('brb, doorbell').textContent).toContain('<OOC>');
+    // The text names whom the trade was with, so the target is not shown again.
+    expect(line('Traded with').textContent).not.toContain('→');
+    expect(screen.getByLabelText(/^Trades and items/)).toBeTruthy();
   });
 
   it('shows who joined the group, and links a quest to Wowhead', () => {
     showStory();
-    expect(line('Party: Borin Ironvow').classList).toContain('group-change');
+    expect(line('In a party with Borin Ironvow').classList).toContain('group-change');
 
     const accepted = line('from Gatekeeper Dummy');
     expect(accepted.textContent).toContain('[Quest accepted] [A Test of Patience], from Gatekeeper Dummy');
@@ -281,7 +296,7 @@ describe('a StoryLog file', () => {
   });
 
   it('puts the selection on the map, and goes from a dot to its line', () => {
-    showStory();
+    show({ filters: NO_FILTERS }, null, evenings);
     fireEvent.click(screen.getByRole('tab', { name: 'Map' }));
     const dot = document.querySelector(`.dot[data-ids="${storyDoc.items.find((item) => item.text.includes('friend.'))!.id}"]`)!;
     fireEvent.click(dot);
@@ -306,7 +321,7 @@ describe('a StoryLog file', () => {
   });
 
   it('colours the busiest players on the map, and draws nobody who was not there', () => {
-    showStory();
+    show({ filters: NO_FILTERS }, null, evenings);
     fireEvent.click(screen.getByRole('tab', { name: 'Map' }));
     const side = within(document.querySelector<HTMLElement>('.map-side')!);
     const coloured = [...document.querySelectorAll('.map-person[aria-pressed="true"]')].map((person) => person.textContent);

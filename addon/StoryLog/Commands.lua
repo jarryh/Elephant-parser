@@ -64,6 +64,13 @@ local function status()
 	else
 		print("  Total RP 3 is not loaded, so no roleplay names")
 	end
+	if #ns.missing > 0 then
+		local missing = {}
+		for i, event in ipairs(ns.missing) do missing[i] = event end
+		table.sort(missing)
+		print("  Not on this client, so not recorded: " .. table.concat(missing, ", "))
+	end
+
 	local failures = ns.failures
 	if failures.count > 0 then
 		print(("  |cffff7070%d lines were not recorded in full.|r First error: %s"):format(failures.count, failures.first or "unknown"))

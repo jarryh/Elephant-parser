@@ -1,4 +1,5 @@
 /** What the map shows, worked out apart from how it is drawn. */
+import { EVENT_TYPES } from './events';
 import { isNpc } from './format';
 import type { LogItem, Place } from './types';
 
@@ -49,6 +50,7 @@ const NEARBY_TYPES = new Set([
   // The recorder's own, so they are drawn where the recorder stood.
   'QUEST_ACCEPTED',
   'QUEST_TURNED_IN',
+  ...EVENT_TYPES,
 ]);
 /** Heard anywhere, so only the speaker's own position says where they were. */
 const GROUP_TYPES = new Set([

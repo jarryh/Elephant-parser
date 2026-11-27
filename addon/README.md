@@ -1,15 +1,17 @@
 # StoryLog
 
 A World of Warcraft addon that records roleplay chat together with the place where it was
-said, who was in your group, and the quests you took. The [story-log app](../README.md)
-reads what it saves. It has no window: you browse in the app.
+said, who was in your group, and what happened besides talking: trades, quests, travel,
+fights, what NPCs said in their windows. The [story-log app](../README.md) reads what it
+saves. It has no window: you browse in the app.
 
 It targets WoW Forever (1.60.1) and retail (12.1.5). It can run alongside Elephant.
 
 > [!IMPORTANT]
 > Say, yell, emotes and NPC speech have been recorded in the game. Party and raid chat,
-> the group, quests and the archive files have only been tested against a simulated
-> client. Keep Elephant running until an evening recorded with StoryLog looks right.
+> the group, quests, everything in the categories `items` to `profiles`, and the archive
+> files have only been tested against a simulated client. Keep Elephant running until an
+> evening recorded with StoryLog looks right.
 
 ## Install
 
@@ -33,22 +35,29 @@ for %n in (StoryLog StoryLog_Archive1 StoryLog_Archive2 StoryLog_Archive3 StoryL
 ## First check
 
 1. Log in and type `/storylog`. It shows the place it would save and whether the game
-   gives coordinates there.
+   gives coordinates there. "Not on this client" lists the game events that this client
+   lacks, so what depends on them is not recorded.
 2. Say something, use an emote and `/roll`.
-3. Join a party and talk in it with a member nearby. Accept a quest and hand one in.
-4. Talk inside a dungeon, away from a boss fight. `/storylog` there says whether the game
+3. Invite someone to a party and talk in it with a member nearby. Pass the lead, then
+   leave the party.
+4. Accept a quest and hand one in. Talk to an NPC who has more to say, and choose an
+   answer. Read a plaque or a book.
+5. Trade an item and some coins. Loot something. Send a letter and open one.
+6. Cross into another zone, take a flight, fight something, die and come back, duel.
+7. Out of combat, cast a spell on someone, mount, and change a piece of clothing.
+8. Talk inside a dungeon, away from a boss fight. `/storylog` there says whether the game
    is hiding chat.
-5. Type `/storylog` again. If a line could not be recorded in full, it says how many and
-   shows the first error. The text of such a line is still saved.
-6. Type `/storylog note First test`, then `/reload`.
-7. Drop this file on the app's window, or copy it to the app's `Data` folder:
+9. Type `/storylog` again. If something could not be recorded in full, it says how many
+   and shows the first error. The text of such a line is still saved.
+10. Type `/storylog note First test`, then `/reload`.
+11. Drop this file on the app's window, or copy it to the app's `Data` folder:
 
    ```text
    World of Warcraft\_forever_\WTF\Account\<account>\SavedVariables\StoryLog.lua
    ```
 
-8. Run `npm test` in the app's folder. It checks the file against what the app read from
-   it, and prints only numbers when something is wrong.
+12. Run `npm test` in the app's folder. It checks the file against what the app read from
+    it, and prints only numbers when something is wrong.
 
 ## Commands
 
@@ -68,8 +77,14 @@ for %n in (StoryLog StoryLog_Archive1 StoryLog_Archive2 StoryLog_Archive3 StoryL
 | ---------- | ------------------------------------------------------------------ | ------- |
 | `speech`   | Say, yell, emotes, party, raid, instance, whispers and NPC speech  | on      |
 | `rolls`    | Dice rolls                                                         | on      |
-| `group`    | Who is in your party or raid, whenever that changes                | on      |
+| `group`    | Who is in your party or raid and who leads it, whenever that changes; invitations | on |
 | `quests`   | The quests you accept and hand in, with their NPC                  | on      |
+| `items`    | Trades, items you loot, receive or make, letters you send or open  | on      |
+| `travel`   | Zones you enter, flights, summons                                  | on      |
+| `combat`   | Fights and whom you fought, boss fights, deaths, duels, new levels | on      |
+| `npc`      | What NPCs say in their windows, your answers, books, quest texts   | on      |
+| `actions`  | Spells and items you use out of combat, mounts, clothes you change | on      |
+| `profiles` | What Total RP 3 profiles say about a character, and whether a line was out of character | on |
 | `guild`    | Guild and officer chat                                             | on      |
 | `channels` | General, Trade and other channels                                  | off     |
 | `notices`  | System, loot, money, skill and similar lines                       | off     |
@@ -81,10 +96,41 @@ apply, also:
 
 - the speaker's own position, for members of your group
 - the language
-- whom you had targeted when you spoke
-- the speaker's race, class and Total RP 3 name
-- who was in your party or raid, including members who said nothing
-- for a quest: its title, its number and the NPC you were talking to
+- whom you had targeted when you spoke, and whom a group member had targeted
+- the speaker's race, class, sex and Total RP 3 name
+- what their Total RP 3 profile says: title, race, class, pronouns, age, eyes, height,
+  build, "currently", "at first glance" and, for the third template of "About", the
+  physical description; and their guild. A profile is read at most every 30 seconds.
+  When the name or "currently" changes, earlier lines keep what was true then.
+- whether Total RP 3 said that the speaker was out of character
+- who was in your party or raid and who led it, including members who said nothing, and
+  why you left: by yourself, removed, or disbanded. A group that the game shows within
+  ten seconds of login counts as one that you were in already
+- for a quest: its title, its number, the NPC you were talking to, and what they said
+- with each session: the game world's time of day, and the day's festivals where the
+  game has a calendar
+
+And lines about what happened:
+
+| Line        | What it saves                                                          |
+| ----------- | ---------------------------------------------------------------------- |
+| Invitation  | Whom you invited, who invited you, who declined                       |
+| Trade       | With whom, the items and money each side gave. Saved when the game says "Trade complete.", or when both accepted and it reports no error within two seconds |
+| Item        | Items you looted, received or made, with how many                     |
+| Letter      | To or from whom, the subject, the text, items and money. Only letters you open, not those from the auction house |
+| Zone        | A zone you entered, or a part of one where you stayed 20 seconds. Not while flying |
+| Flight      | Where it began and ended, and how long it took                        |
+| Summons     | Who summoned you, and where to                                        |
+| Fight       | How long, and up to six enemies you targeted. Fights within 30 seconds of each other are one |
+| Boss fight  | The boss, how long, and whether you won                               |
+| Death       | That you died, and who brought you back                               |
+| Duel        | Who challenged whom, and who won or fled. Also others' duels nearby  |
+| Level       | Your new level                                                         |
+| NPC text    | What an NPC says when you talk to them, once per NPC and text         |
+| Answer      | The answer you chose in an NPC's window                               |
+| Reading     | A book, letter or plaque you read, a page at a time                   |
+| Action      | A spell or item you used, on whom, and how often within the minute that followed. Only out of combat, and only what you started |
+| Clothes     | What you put on and took off, once you stop changing                  |
 
 Battle.net whispers are saved without the friend's name or BattleTag.
 
@@ -96,7 +142,14 @@ Battle.net whispers are saved without the friend's name or BattleTag.
 - **Some chat.** During boss encounters, Mythic+ runs and PvP matches, the game hides chat
   from addons, possibly elsewhere in dungeons and raids too. StoryLog saves only how many
   lines were hidden.
-- **Other players' quests.** Only your own are visible.
+- **Other players' quests, trades and letters.** Only your own are visible.
+- **The combat log on retail.** Add-ons may not read it, and even trying shows an error.
+  So a fight is its start, its end and whom you targeted, not who hit whom, and a death
+  doesn't say who killed you.
+- **Some events on some clients.** StoryLog registers only the events that the client
+  says it has. `/storylog` lists those it lacks.
+- **Who someone is, in combat on retail.** Enemy names, others' targets and spell targets
+  can be hidden then. A line is saved without them.
 - **More than one file per addon.** Hence the archive addons below.
 
 ## When the log grows

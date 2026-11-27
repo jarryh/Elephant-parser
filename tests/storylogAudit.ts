@@ -34,7 +34,7 @@ export interface Audit {
   misplaced: number;
   /** Items without a time. */
   undated: number;
-  /** `p`, `sp`, `s` or `to` that point at nothing, and speakers without a name. */
+  /** `p`, `sp`, `s`, `to`, `lead` or `from` that point at nothing, and speakers without a name. */
   dangling: number;
   /** Lines whose place, speaker's place, speaker or target the reader did not pick up. */
   dropped: number;
@@ -46,6 +46,8 @@ export interface Audit {
 
 const REFERENCES = ['p', 'sp', 's', 'to'] as const;
 type Reference = (typeof REFERENCES)[number];
+/** These point at a speaker or a place too, but end up in a line's text, so only where they point is checked. */
+const IN_TEXT = { lead: 'speaker', from: 'place' } as const;
 
 const tables = (list: Plain | undefined) =>
   Array.isArray(list) ? list.filter((entry): entry is [Plain, [Plain, Plain][]] => Array.isArray(entry[1])) : [];
@@ -79,6 +81,10 @@ export function auditStoryLog(bytes: Buffer): Audit {
         if (target === undefined) continue;
         inFile[key]++;
         if (!(key === 'p' || key === 'sp' ? places : speakers).has(target)) dangling++;
+      }
+      for (const [key, kind] of Object.entries(IN_TEXT)) {
+        const target = field(message, key);
+        if (target !== undefined && !(kind === 'place' ? places : speakers).has(target)) dangling++;
       }
     }
   }

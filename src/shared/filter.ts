@@ -1,3 +1,4 @@
+import { OPEN_EVENT_TYPES } from './events';
 import { placeKeys } from './places';
 import type { LogDocument, LogItem, Place } from './types';
 
@@ -46,6 +47,8 @@ export const RP_TYPES = [
   'ROLL',
   'QUEST_ACCEPTED',
   'QUEST_TURNED_IN',
+  // What happened: trades, travel, fights, NPC dialogue. Not letters, which are private.
+  ...OPEN_EVENT_TYPES,
 ];
 
 /** Lower-cases and drops accents, so "elowyn" finds "Élowyn". */
@@ -57,14 +60,17 @@ const searchable = new WeakMap<LogItem, string>();
 function searchText(item: LogItem): string {
   let value = searchable.get(item);
   if (value === undefined) {
-    value = fold([item.sender ?? '', ...(item.rpName ? [item.rpName] : []), item.text].join(' '));
+    value = fold([item.sender ?? '', ...(item.rpName ? [item.rpName] : []), item.text, item.detail ?? ''].join(' '));
     searchable.set(item, value);
   }
   return value;
 }
 
-/** StoryLog's own lines. They show without "Show markers", and have no channel, type or sender to filter by. */
-const ANNOTATIONS = new Set(['NOTE', 'HIDDEN', 'GROUP']);
+/**
+ * StoryLog's own lines. They show without "Show markers", and have no channel, type or
+ * sender to filter by. Stories get them too.
+ */
+export const ANNOTATIONS: ReadonlySet<string> = new Set(['NOTE', 'HIDDEN', 'GROUP']);
 
 export function createMatcher(filters: Filters, places: readonly Place[] = []): (item: LogItem) => boolean {
   const owners = new Set(filters.owners);

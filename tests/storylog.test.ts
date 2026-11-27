@@ -47,11 +47,13 @@ describe('parseStoryLog', () => {
 
   it('finds every session, message and marker', () => {
     expect([...new Set(doc.logs.map((log) => log.owner))]).toEqual(['Élowyn Testwood', 'Dorn Placeholder']);
-    expect(doc.items.filter((item) => item.kind === 'message')).toHaveLength(22);
+    expect(doc.items.filter((item) => item.kind === 'message')).toHaveLength(42);
     expect(doc.items.filter((item) => item.kind === 'marker').map((item) => item.text)).toEqual([
-      'Party: Borin Ironvow',
+      'In a party with Borin Ironvow',
       'Note: The bargain',
       '14 messages hidden by the game',
+      'Joined a party with Borin Ironvow, led by Élowyn Moonwhisper',
+      'Note: Into Westfall',
     ]);
     expect(doc.gameVersion).toBe(16001);
   });
@@ -182,11 +184,12 @@ describe('parseStoryLog', () => {
 
 describe('the group', () => {
   it('is on every line from where it was saved to the end of the session', () => {
-    expect(doc.groups).toEqual([{ members: [0] }]);
+    expect(doc.groups![0]).toEqual({ members: [0] });
     expect(doc.speakers![0]).toMatchObject({ name: 'Borin Fixture', rp: 'Borin Ironvow' });
-    const [first, second] = [1898622800, 1898714000].map((end, session) =>
-      doc.items.filter((item) => item.owner === 'Élowyn Testwood' && (session ? item.at > 1898622800 : item.at <= end)),
-    );
+    const [first, second] = [
+      [0, 1898622800],
+      [1898622800, 1898714000],
+    ].map(([from, to]) => doc.items.filter((item) => item.owner === 'Élowyn Testwood' && item.at > from! && item.at <= to!));
     expect(first!.every((item) => item.group === 0)).toBe(true);
     expect(first).toHaveLength(21);
     // Nothing carries over to the next login.
@@ -199,12 +202,14 @@ describe('the group', () => {
     );
 
   it.each([
-    ['{ t = 1, e = "GROUP", g = { 1, 2 } }', 'Party: Bo Test, Cyrus', { members: [0, 1] }],
-    ['{ t = 1, e = "GROUP", g = { 2 }, raid = true }', 'Raid (2): Cyrus', { members: [1], raid: true }],
+    ['{ t = 5, e = "GROUP", g = { 1, 2 } }', 'In a party with Bo Test and Cyrus', { members: [0, 1] }],
+    ['{ t = 5, e = "GROUP", g = { 2 }, raid = true }', 'In a raid with Cyrus (2)', { members: [1], raid: true }],
     // A member that the file does not know is left out.
-    ['{ t = 1, e = "GROUP", g = { 1, 9 } }', 'Party: Bo Test', { members: [0] }],
+    ['{ t = 5, e = "GROUP", g = { 1, 9 } }', 'In a party with Bo Test', { members: [0] }],
+    // Not saved at login, so the group formed then.
+    ['{ t = 60, e = "GROUP", g = { 1 } }', 'Joined a party with Bo Test', { members: [0] }],
   ])('reads %s', (message, text, group) => {
-    const read = grouped(`${message}, { t = 2, e = "SAY", m = "hi", s = 1 }`);
+    const read = grouped(`${message}, { t = 70, e = "SAY", m = "hi", s = 1 }`);
     expect(read.items.map((item) => [item.kind, item.text, item.group])).toEqual([
       ['marker', text, 0],
       ['message', 'hi', 0],
@@ -214,16 +219,162 @@ describe('the group', () => {
 
   it('ends when you leave, and is one entry when you join the same people again', () => {
     const read = grouped(
-      '{ t = 1, e = "GROUP", g = { 1 } }, { t = 2, e = "GROUP", g = {} }, { t = 3, e = "SAY", m = "alone", s = 1 },' +
-        ' { t = 4, e = "GROUP", g = { 1 } }',
+      '{ t = 5, e = "GROUP", g = { 1 } }, { t = 20, e = "GROUP", g = {} }, { t = 30, e = "SAY", m = "alone", s = 1 },' +
+        ' { t = 40, e = "GROUP", g = { 1 } }',
     );
     expect(read.items.map((item) => [item.text, item.group])).toEqual([
-      ['Party: Bo Test', 0],
+      ['In a party with Bo Test', 0],
       ['Left the group', undefined],
       ['alone', undefined],
-      ['Party: Bo Test', 0],
+      ['Joined a party with Bo Test', 0],
     ]);
     expect(read.groups).toHaveLength(1);
+  });
+
+  it('says who joined and who left, and who leads', () => {
+    const read = parseStoryLog(
+      session(
+        'speakers = { { name = "Bo Test" }, { name = "Cy Test", rp = "Cyrus" }, { name = "Di Test" }, { name = "Ann Test" } }, ' +
+          'messages = { { t = 5, e = "GROUP", g = { 1 }, lead = 4 }, { t = 20, e = "GROUP", g = { 1, 2, 3 }, lead = 4 }, ' +
+          '{ t = 30, e = "GROUP", g = { 2, 3 }, raid = true, lead = 2 }, { t = 40, e = "GROUP", g = {}, why = "disbanded" } }',
+      ),
+    );
+    expect(read.items.map((item) => item.text)).toEqual([
+      'In a party with Bo Test, led by Ann Test',
+      'Cyrus and Di Test joined. Party, led by Ann Test: Bo Test, Cyrus, Di Test',
+      'Bo Test left, the party became a raid, Cyrus now leads. Raid (3): Cyrus (leader), Di Test',
+      'The group was disbanded',
+    ]);
+    expect(read.groups![2]).toEqual({ members: [1, 2], raid: true, leader: 1 });
+  });
+
+  it('is not someone leaving and joining when only their roleplay name changed', () => {
+    const read = parseStoryLog(
+      session(
+        'speakers = { { name = "Bo Test", rp = "Bo" }, { name = "Bo Test", rp = "Hooded Figure" } }, ' +
+          'messages = { { t = 5, e = "GROUP", g = { 1 } }, { t = 20, e = "GROUP", g = { 2 } } }',
+      ),
+    );
+    expect(read.items.map((item) => item.text)).toEqual(['In a party with Bo', 'Party: Hooded Figure']);
+  });
+});
+
+describe('what happened', () => {
+  const people = 'speakers = { { name = "Bo Test" }, { name = "Cy|Test", rp = "Cy" }, { name = "Ann Test", sex = 3 } }';
+  const read = (message: string) => parseStoryLog(session(`${people}, messages = { ${message} }`)).items[0]!;
+
+  it.each([
+    ['{ e = "INVITE", k = "out", s = 3, to = 1 }', 'Invited Bo Test to the group'],
+    ['{ e = "INVITE", k = "in", s = 1 }', 'Bo Test invited you to a group'],
+    ['{ e = "INVITE", k = "declined", s = 2 }', 'Cy declined your invitation'],
+    [
+      '{ e = "TRADE", to = 1, a = { { link = "[Axe]", count = 2 }, { link = "[Bow]" } }, am = 10203, bm = 5 }',
+      'Traded with Bo Test: gave [Axe] ×2, [Bow], 1g 2s 3c; got 5c',
+    ],
+    ['{ e = "TRADE" }', 'Traded with someone'],
+    ['{ e = "ITEM", k = "made", m = "[Potion]", n = 3 }', 'Made [Potion] ×3'],
+    ['{ e = "ITEM", k = "got", m = "[Key]" }', 'Received [Key]'],
+    ['{ e = "ZONE" }', 'Moved on'],
+    ['{ e = "TRAVEL", k = "summon", s = 1, m = "The Deadmines" }', 'Summoned by Bo Test to The Deadmines'],
+    ['{ e = "FIGHT", n = 90 }', 'A fight (2 min)'],
+    ['{ e = "FIGHT", foes = { "Thug", "Bandit", "Boss" }, n = 40 }', 'Fought Thug, Bandit and Boss (40 s)'],
+    ['{ e = "ENCOUNTER", m = "Hogger", won = false, n = 3700 }', 'Fought Hogger and lost (1 h 2 min)'],
+    ['{ e = "ENCOUNTER", m = "Hogger" }', 'Fought Hogger'],
+    ['{ e = "DEATH" }', 'Died'],
+    ['{ e = "REVIVED" }', 'Came back to life'],
+    ['{ e = "DUEL", k = "fled", s = 1, to = 2 }', 'Cy fled from a duel with Bo Test'],
+    ['{ e = "LEVEL" }', 'Gained a level'],
+    ['{ e = "GOSSIP", m = "Greetings, $gsir:madam;. $B$BWelcome, $N." }', 'Greetings, madam.\n\nWelcome, Ann.'],
+    ['{ e = "CHOICE", m = "Yes." }', 'Chose: “Yes.”'],
+    ['{ e = "READ", m = "Book", n = 3 }', 'Read “Book”, page 3'],
+    ['{ e = "CAST", m = "Heal", to = 1, n = 4 }', 'Cast Heal on Bo Test ×4'],
+    ['{ e = "CAST", m = "Brown Horse", mount = true }', 'Mounted Brown Horse'],
+    ['{ e = "OUTFIT", off = { "[Hat]" } }', 'Took off [Hat]'],
+  ])('reads %s', (message, text) => {
+    const item = read(message.replace('{ e', '{ t = 10, e'));
+    expect(item).toMatchObject({ kind: 'message', text });
+  });
+
+  it('keeps a letter or a page in full beside the line, and leaves out the HTML of a book', () => {
+    const letter = read('{ t = 10, e = "MAIL", k = "read", who = "Bo Test", m = "Hi", text = "Dear Ann,\\nhello." }');
+    expect(letter).toMatchObject({ text: 'Read a letter from Bo Test: “Hi”', detail: 'Dear Ann,\nhello.', channels: ['@mail'] });
+    const page = read('{ t = 10, e = "READ", m = "Plaque", text = "<HTML><BODY><H1>Here</H1><P>lies Arthur.</P></BODY></HTML>" }');
+    expect(page.detail).toBe('Here\nlies Arthur.');
+  });
+
+  it('keeps narration in angle brackets, which is no HTML', () => {
+    const said = read('{ t = 10, e = "GOSSIP", s = 1, m = "<The dwarf hands you a sealed letter.> Take it. <He nods.>" }');
+    expect(said.text).toBe('<The dwarf hands you a sealed letter.> Take it. <He nods.>');
+    const quest = read('{ t = 10, e = "QUEST_ACCEPTED", q = 7, m = "Pelts", text = "<Snarl> Bring pelts.", goal = "<Ten> pelts" }');
+    expect(quest.detail).toBe('<Snarl> Bring pelts.\n\nObjective: <Ten> pelts');
+    const page = read('{ t = 10, e = "READ", m = "Note", text = "<scrawled> Meet me at dawn." }');
+    expect(page.detail).toBe('<scrawled> Meet me at dawn.');
+  });
+
+  it('leaves a letter as its writer wrote it', () => {
+    const letter = read('{ t = 10, e = "MAIL", k = "read", who = "Bo Test", m = "Hi", text = "The $Bounty is $N. <signed> Bo" }');
+    expect(letter.detail).toBe('The $Bounty is $N. <signed> Bo');
+  });
+
+  it('belongs to the recorder, whoever else it names', () => {
+    const invited = read('{ t = 10, e = "INVITE", k = "in", s = 1 }');
+    expect(invited).toMatchObject({ sender: 'Ann Test', self: true, speaker: 0, text: 'Bo Test invited you to a group' });
+    const traded = read('{ t = 10, e = "TRADE", s = 3, to = 2 }');
+    expect(traded).toMatchObject({ sender: 'Ann Test', self: true, speaker: 2, target: 'Cy', targetSpeaker: 1 });
+    const back = read('{ t = 10, e = "REVIVED" }');
+    expect(back).toMatchObject({ sender: 'Ann Test', self: true });
+    // An NPC speaks its own line.
+    const npc = parseStoryLog(session('speakers = { { name = "Guard", npc = true } }, messages = { { t = 10, e = "GOSSIP", s = 1, m = "Halt." } }'));
+    expect(npc.items[0]).toMatchObject({ sender: 'Guard' });
+    expect(npc.items[0]).not.toHaveProperty('self');
+  });
+
+  it('still takes its ID from whom the addon named, as saved edits are stored by ID', () => {
+    const [byBo, byCy] = ['1', '2'].map((s) => read(`{ t = 10, e = "INVITE", k = "in", s = ${s} }`));
+    expect(byBo!.sender).toBe(byCy!.sender);
+    expect(byBo!.id).not.toBe(byCy!.id);
+  });
+
+  it("keeps a name's | from starting an escape code", () => {
+    expect(read('{ t = 10, e = "DUEL", k = "won", s = 1, to = 2 }').raw).toBe('Bo Test defeated Cy in a duel');
+    expect(read('{ t = 10, e = "INVITE", k = "out", to = 2 }').text).toBe('Invited Cy to the group');
+    const named = parseStoryLog(session('speakers = { { name = "A|cffff0000B" } }, messages = { { t = 1, e = "INVITE", k = "in", s = 1 } }'));
+    expect(named.items[0]!.text).toBe('AB invited you to a group');
+  });
+
+  it('marks a line out of character', () => {
+    expect(line('brb, doorbell')).toMatchObject({ ooc: true });
+    expect(line('Ready when you are.')).not.toHaveProperty('ooc');
+  });
+
+  it('reads what a profile says, without its colour tags', () => {
+    const borin = doc.speakers!.findLast((who) => who.name === 'Borin Fixture')!;
+    expect(borin.details).toEqual({
+      title: 'Captain of the Gate',
+      pronouns: 'he/him',
+      age: '45',
+      eyes: 'Grey',
+      currently: 'Escorting Élowyn to Stormwind',
+      glance: 'Scar: Across the cheek',
+    });
+    const read = parseStoryLog(session('speakers = { { name = "Bo", look = "Broad, {col:ff0000}red{/col} beard {link*https://x*here}" } }'));
+    expect(read.speakers![0]!.details).toEqual({ look: 'Broad, red beard here' });
+    const headed = parseStoryLog(session('speakers = { { name = "Bo", look = "{h2}Eyes{/h2}Grey{p}Tall{/p}and thin" } }'));
+    expect(headed.speakers![0]!.details).toEqual({ look: 'Eyes Grey Tall and thin' });
+  });
+
+  it('says "in a party" where the addon saw that the recorder was in one at login', () => {
+    const group = (fields: string) =>
+      parseStoryLog(session(`speakers = { { name = "Bo Test" } }, messages = { { t = 6, e = "SAY", m = "hi" }, { e = "GROUP", g = { 1 }, ${fields} } }`));
+    expect(group('t = 12, start = true').items[1]!.text).toBe('In a party with Bo Test');
+    expect(group('t = 12').items[1]!.text).toBe('Joined a party with Bo Test');
+    // An older log has no such mark: then it is one that was saved within moments of the login.
+    expect(group('t = 7').items[1]!.text).toBe('In a party with Bo Test');
+  });
+
+  it("knows the game world's time when each session began", () => {
+    expect(doc.sessions!.at(-1)).toEqual({ started: 1898900000, clock: 390 });
+    expect(doc.items.at(-1)!.session).toBe(3);
   });
 });
 
@@ -332,8 +483,8 @@ describe('StoryLog item IDs', () => {
     const from = STORYLOG.indexOf(list) + list.length;
     const pruned = STORYLOG.slice(0, from) + STORYLOG.slice(STORYLOG.indexOf('{\n["id"] = "1898713700'));
     const after = parseLog(pruned).items.map((item) => item.id);
-    expect(after).toHaveLength(4);
-    expect(after).toEqual(ids.slice(-4));
+    expect(after).toHaveLength(26);
+    expect(after).toEqual(ids.slice(-26));
   });
 
   it('survive a profile that arrived late, and a growing count of hidden lines', () => {
@@ -376,11 +527,11 @@ describe('the checks for a real file', () => {
       ...clean,
       utf8: true,
       sameAsReference: true,
-      lines: 25,
-      entries: 25,
-      items: 25,
-      typesInFile: 17,
-      types: 17,
+      lines: 47,
+      entries: 47,
+      items: 47,
+      typesInFile: 31,
+      types: 31,
       charactersInFile: 2,
       owners: 2,
       unchanged: true,
@@ -394,6 +545,11 @@ describe('the checks for a real file', () => {
 
   it.each(['p', 'sp', 's', 'to'])('notice a %s that points at nothing', (key) => {
     expect(audit(written(['["t"] = 5,', `["${key}"] = 9,`], lists))).toMatchObject({ ...clean, dangling: 1, dropped: 1 });
+  });
+
+  it.each(['lead', 'from'])('notice a %s that points at nothing', (key) => {
+    expect(audit(written(['["t"] = 5,', `["${key}"] = 1,`], lists))).toMatchObject(clean);
+    expect(audit(written(['["t"] = 5,', `["${key}"] = 9,`], lists))).toMatchObject({ ...clean, dangling: 1 });
   });
 
   it('notice a speaker without a name', () => {

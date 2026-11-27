@@ -1,4 +1,4 @@
-import { createMatcher, type Filters } from './filter';
+import { ANNOTATIONS, createMatcher, type Filters } from './filter';
 import type { LogDocument, LogItem } from './types';
 
 /**
@@ -11,8 +11,10 @@ export type EntryState = 'kept' | 'removed' | 'out';
 export interface Selection {
   /** Everything that matches the filters, removed or not. This is what the chat shows. */
   matched: LogItem[];
-  /** The matching messages that are not removed. Exports and stories use these. */
+  /** The matching messages that are not removed. Exports use these. */
   messages: LogItem[];
+  /** What a story is made from: the messages, and StoryLog's notes and group changes among them. */
+  story: LogItem[];
   /** Parallel to `doc.entries`. */
   states: EntryState[];
 }
@@ -28,6 +30,13 @@ export function computeSelection(doc: LogDocument, filters: Filters, removed: Re
   const matches = createMatcher(filters, doc.places);
   const matched = doc.items.filter(matches);
   const messages = matched.filter((item) => item.kind === 'message' && !removed.has(item.id));
+  const story =
+    doc.format === 'storylog'
+      ? matched.filter(
+          (item) =>
+            !removed.has(item.id) && (item.kind === 'message' || (item.kind === 'marker' && ANNOTATIONS.has(item.type))),
+        )
+      : messages;
 
   const selected = new Set(messages.map((item) => item.id));
   const candidates = doc.format === 'storylog' ? matched : doc.items;
@@ -41,5 +50,5 @@ export function computeSelection(doc: LogDocument, filters: Filters, removed: Re
     return !channels.size || channels.has(doc.logs[log]!.channel) ? 'kept' : 'out';
   });
 
-  return { matched, messages, states };
+  return { matched, messages, story, states };
 }

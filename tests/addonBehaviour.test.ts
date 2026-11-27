@@ -107,13 +107,74 @@ describe('the test fixture', () => {
     W.now = 1898800030
   `;
 
-  it('is exactly what the addon saves over three sessions', () => {
+  /** A morning on the road with Borin: what happens besides talking. */
+  const ROAD = String.raw`
+    W.maps[1436] = "Westfall"
+    local LINEN, RAG, RING ="|cffffffff|Hitem:2589::::::::70:::::|h[Linen Cloth]|h|r", "|cff9d9d9d|Hitem:4|h[Torn Rag]|h|r", "|cff1eff00|Hitem:9999::::::::70:::::|h[Silver Ring]|h|r"
+    W.profiles["Borin Fixture"] = {
+      characteristics = { FT = "Captain of the Gate", AG = "45", EC = "Grey" },
+      character = { CU = "Escorting Élowyn to Stormwind" },
+      misc = { PE = { ["1"] = { AC = true, TI = "Scar", TX = "Across the cheek" } } },
+      pronouns = "he/him",
+    }
+    W.now = 1898900060; chat("SYSTEM", { text = "You have invited Borin Fixture to join your group." })
+    W.units.party1 = { guid = B, first = "Borin", second = "Fixture" }
+    at("party1", 1429, 0.4180, 0.6560, -9466.0, 61.0, 0)
+    W.leader = "player"; W.now = 1898900070; fire("GROUP_ROSTER_UPDATE")
+    W.now = 1898900080; chat("SAY", { text = "Ready when you are.", sender = "Borin Fixture", guid = B, lang = "Common" })
+    W.status["Borin Fixture"] = 2
+    W.now = 1898900090; chat("PARTY", { text = "brb, doorbell", sender = "Borin Fixture", guid = B })
+    W.status["Borin Fixture"] = 1
+    W.units.npc = W.units.party1; W.now = 1898900100; fire("TRADE_SHOW")
+    W.trade = { theirs = { { link = LINEN, count = 5 } }, myMoney = 1500 }
+    fire("TRADE_TARGET_ITEM_CHANGED", 1); fire("TRADE_MONEY_CHANGED"); fire("TRADE_ACCEPT_UPDATE", 1, 1)
+    W.trade = nil; fire("TRADE_CLOSED"); fire("UI_INFO_MESSAGE", 1, "Trade complete.")
+    W.units.npc = { guid = "Creature-0-4444-0-12-295-0000000002", first = "Innkeeper Farley" }
+    W.gossip = { text = "Welcome to the Lion's Pride Inn, $N!$BCome in.", options = { "Make this inn your home.", "Goodbye." } }
+    W.now = 1898900110; fire("GOSSIP_SHOW"); C_GossipInfo.SelectOption(101)
+    W.quests[60] = { title = "Lost Necklace", inLog = true }
+    W.window = { id = 60, text = "I lost my necklace by the river.", goal = "Find the necklace." }
+    W.now = 1898900120; fire("QUEST_DETAIL"); fire("QUEST_ACCEPTED", 60)
+    W.units.npc = nil
+    W.book = { title = "A Weathered Plaque", pages = { "<HTML><BODY><P>Here stood the old mill.</P></BODY></HTML>" } }
+    W.now = 1898900130; fire("ITEM_TEXT_READY")
+    W.units.target = { guid = "Creature-0-4444-0-12-116-0000000003", first = "Defias Thug", hostile = true }
+    W.now = 1898900200; fire("PLAYER_REGEN_DISABLED"); W.now = 1898900225; fire("PLAYER_REGEN_ENABLED")
+    W.now = 1898900226; chat("LOOT", { text = "You receive loot: " .. RAG .. "x2." })
+    W.now = 1898900227; chat("LOOT", { text = "You receive loot: " .. RING .. "." })
+    W.units.target = W.units.party1; W.spells[19750] = "Flash of Light"
+    W.now = 1898900240; fire("UNIT_SPELLCAST_SENT", "player", "Borin", "Cast-1", 19750); fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", 19750)
+    W.now = 1898900250; fire("DUEL_REQUESTED", "Borin Fixture")
+    W.now = 1898900280; chat("SYSTEM", { text = "Borin Fixture has defeated Élowyn Testwood in a duel" })
+    W.now = 1898900290; slash("note Into Westfall")
+    W.worn[1] = "|cff1eff00|Hitem:7720::::::::70:::::|h[Feathered Hat]|h|r"; W.now = 1898900300; fire("PLAYER_EQUIPMENT_CHANGED", 1); runTimers()
+    W.zone = "Westfall"; W.sub = "Sentinel Hill"
+    at("player", 1436, 0.5600, 0.4900, -10628.0, 1036.0, 0); at("party1", 1436, 0.5610, 0.4910, -10629.0, 1035.0, 0)
+    W.now = 1898900400; fire("ZONE_CHANGED_NEW_AREA"); runTimers()
+    W.now = 1898900500; fire("PLAYER_CONTROL_LOST"); W.taxi = true; runTimers()
+    W.zone = "Stormwind City"; W.sub = "Trade District"; at("player", 1453, 0.6200, 0.7100, -8830.0, 620.0, 0)
+    W.now = 1898900680; W.taxi = false; fire("PLAYER_CONTROL_GAINED")
+    W.now = 1898900700; chat("PARTY", { text = "Took the road. See you at the gate.", sender = "Borin Fixture", guid = B })
+    W.outgoing = { items = { { link = LINEN, count = 5 } } }
+    W.now = 1898900710; SendMail("Borin Fixture", "Your cloth", "Thank you for the escort,\nand for the cloth back."); fire("MAIL_SEND_SUCCESS")
+    W.now = 1898900720; fire("PLAYER_LEVEL_UP", 12)
+    W.now = 1898900800
+  `;
+
+  it('is exactly what the addon saves over four sessions', () => {
     let saved = new Client({ pre: 'TRP = true' }).run(SETUP).login().run(EVENING).logout();
     saved = new Client({ saved, pre: 'TRP = true' }).run(SETUP).run('W.now = 1898713700').login().run(NEXT_EVENING).logout();
     saved = new Client({ saved, me: { guid: 'Player-9999-0000000D', first: 'Dorn Placeholder' } })
       .run('W.now = 1898800000')
       .login()
       .run(OTHER_CHARACTER)
+      .logout();
+    saved = new Client({ saved, pre: 'TRP = true' })
+      .run(SETUP)
+      .run('W.now = 1898900000; W.gameTime = { 6, 30 }; W.zone = "Elwynn Forest"; W.sub = "Goldshire"; W.worn[5] = "|cffffffff|Hitem:6096|h[Apprentice\'s Shirt]|h|r"')
+      .run('at("player", 1429, 0.4170, 0.6550, -9464.8, 62.2, 0)')
+      .login()
+      .run(ROAD)
       .logout();
     // After changing the addon on purpose, run the tests once with UPDATE_FIXTURE=1.
     if (process.env.UPDATE_FIXTURE) {
@@ -336,7 +397,10 @@ describe('/storylog prune', () => {
 describe('when something goes wrong', () => {
   it('keeps the text of a line that it could not describe, and says so', () => {
     const client = new Client().login();
-    client.run('NS.playerPlace = function() error("no place today") end').run(ME).run(BORIN).run('slash("")');
+    client.run('NS.playerPlace = function() error("no place today") end').run(ME).run(BORIN);
+    // Said a moment later: printing inside one of the game's own functions would taint the chat.
+    expect(client.printed()).toBe('');
+    client.run('runTimers(); slash("")');
     expect(session(client).messages).toEqual([
       { t: 1898622000, e: 'SAY', m: 'hi' },
       { t: 1898622000, e: 'SAY', m: 'hi' },
@@ -382,15 +446,25 @@ describe('the group', () => {
   it('is saved when you join, with what is known of each member', () => {
     const client = new Client({ pre: 'TRP = true' }).login();
     client.run('W.infos["Player-1-B"] = { classFile = "WARRIOR", race = "Dwarf", sex = 2 }; W.rp["Borin Fixture"] = "Borin Ironvow"');
-    client.run(B).run(ROSTER);
-    expect(groups(client)).toEqual([{ t: 1898622000, e: 'GROUP', g: [1], p: 1 }]);
+    client.run('W.now = W.now + 60').run(B).run(ROSTER);
+    expect(groups(client)).toEqual([{ t: 1898622060, e: 'GROUP', g: [1], p: 1 }]);
     expect(session(client).speakers[0]).toMatchObject({ name: 'Borin Fixture', class: 'WARRIOR', race: 'Dwarf', rp: 'Borin Ironvow' });
   });
 
   it('is saved at login when you are already in one, and not when you are in none', () => {
     const client = new Client().run(B).login();
-    expect(groups(client)).toHaveLength(1);
+    expect(groups(client)).toEqual([{ t: 1898622000, e: 'GROUP', g: [1], p: 1, start: true }]);
     expect(groups(new Client().login().run(ROSTER))).toEqual([]);
+  });
+
+  it('is one that you were in already when the game only knows it a few seconds after login', () => {
+    // Something is said first, and the roster comes late.
+    const late = new Client().login().run(ROSTER).run(ME).run('W.now = W.now + 5').run(B).run(ROSTER);
+    expect(groups(late)).toMatchObject([{ start: true }]);
+    // Minutes later it is a group that you joined.
+    const joined = new Client().login().run(ROSTER).run('W.now = W.now + 300').run(B).run(ROSTER);
+    expect(groups(joined)).toHaveLength(1);
+    expect(groups(joined)[0]).not.toHaveProperty('start');
   });
 
   it('is one line while it changes within seconds, and a new line after that', () => {

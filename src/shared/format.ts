@@ -1,3 +1,4 @@
+import { EVENTS } from './events';
 import type { LogItem } from './types';
 
 const TYPES = new Map<string, [label: string, color: string]>([
@@ -38,14 +39,14 @@ const TYPES = new Map<string, [label: string, color: string]>([
 ]);
 
 export function typeLabel(type: string): string {
-  const known = TYPES.get(type)?.[0];
+  const known = TYPES.get(type)?.[0] ?? EVENTS.get(type)?.label;
   if (known) return known;
   const words = type.toLowerCase().replaceAll('_', ' ');
   return words ? words[0]!.toUpperCase() + words.slice(1) : 'Note';
 }
 
 export function typeColor(type: string): string {
-  return TYPES.get(type)?.[1] ?? '#c4c4cc';
+  return TYPES.get(type)?.[1] ?? EVENTS.get(type)?.color ?? '#c4c4cc';
 }
 
 /** The label in front of a line. */
@@ -60,6 +61,9 @@ export function lineTag(item: LogItem): string {
 export function speaker(item: LogItem): { before: string; name: string; after: string } | null {
   if (!item.sender) return null;
   const name = item.rpName ?? item.sender;
+  // The text of an event names whoever took part.
+  const event = EVENTS.get(item.type);
+  if (event) return event.npc ? { before: '', name, after: ' says: ' } : null;
   switch (item.type) {
     case 'TEXT_EMOTE':
     case 'ROLL':
@@ -88,8 +92,8 @@ export function speaker(item: LogItem): { before: string; name: string; after: s
   }
 }
 
-export function isNpc(item: LogItem): boolean {
-  return /^(?:MONSTER_|RAID_BOSS_)/.test(item.type);
+export function isNpc(item: Pick<LogItem, 'type'>): boolean {
+  return /^(?:MONSTER_|RAID_BOSS_)/.test(item.type) || EVENTS.get(item.type)?.npc === true;
 }
 
 /** A quest that the recorder accepted or handed in. */

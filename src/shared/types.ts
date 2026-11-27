@@ -60,6 +60,27 @@ export interface Group {
   /** Indexes into `LogDocument.speakers`. */
   members: number[];
   raid?: boolean;
+  /** Who leads it, a member or the recorder: an index into `LogDocument.speakers`. */
+  leader?: number;
+}
+
+/** What a player's Total RP 3 profile says about their character, and their guild. */
+export interface Details {
+  title?: string;
+  race?: string;
+  class?: string;
+  pronouns?: string;
+  age?: string;
+  eyes?: string;
+  height?: string;
+  build?: string;
+  /** What they are doing right now. */
+  currently?: string;
+  /** "At first glance" notes. */
+  glance?: string;
+  /** The physical description. */
+  look?: string;
+  guild?: string;
 }
 
 export interface Speaker {
@@ -68,8 +89,20 @@ export interface Speaker {
   race?: string;
   /** The class token, such as `PALADIN`. */
   class?: string;
+  sex?: 'male' | 'female';
   npc?: boolean;
   npcId?: number;
+  details?: Details;
+}
+
+/** One login of one character. Only StoryLog records it. */
+export interface Session {
+  /** Unix seconds. */
+  started: number;
+  /** The game world's time at `started`, in minutes after midnight. */
+  clock?: number;
+  /** The game's festivals on that day. */
+  holidays?: string[];
 }
 
 /** One logical item, de-duplicated across the logs that contain it. */
@@ -97,19 +130,33 @@ export interface LogItem {
   place?: number;
   /** The speaker's own place, which is known for group members. */
   speakerPlace?: number;
-  /** The recorder said it, so `place` is the speaker's place too. */
+  /** The recorder said it, or it happened to them, so `place` is the speaker's place too. */
   self?: boolean;
-  /** An index into `LogDocument.speakers`. */
+  /**
+   * An index into `LogDocument.speakers`. For something that happened it can be another
+   * than the sender: who invited the recorder, who won the duel.
+   */
   speaker?: number;
   rpName?: string;
   /** When it isn't the recorder's usual language. */
   language?: string;
-  /** Whom the recorder had targeted while saying it. For a quest, its NPC. */
+  /**
+   * Whom the speaker had targeted while saying it. For a quest, its NPC; for something
+   * that happened, the other one in it.
+   */
   target?: string;
+  /** The same one, as an index into `LogDocument.speakers`. */
+  targetSpeaker?: number;
   /** The group that the recorder was in at the time: an index into `LogDocument.groups`. */
   group?: number;
   /** The game's ID of the quest that the line is about. */
   quest?: number;
+  /** Longer text that belongs to the line: a letter, a book page, a quest's description. */
+  detail?: string;
+  /** Total RP 3 said that the speaker was out of character. */
+  ooc?: boolean;
+  /** Index into `LogDocument.sessions`. */
+  session?: number;
 }
 
 export interface LogDocument {
@@ -127,4 +174,5 @@ export interface LogDocument {
   places?: Place[];
   speakers?: Speaker[];
   groups?: Group[];
+  sessions?: Session[];
 }

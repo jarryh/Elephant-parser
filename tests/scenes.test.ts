@@ -29,6 +29,13 @@ const quest = (at: number, place?: number) =>
   line(at, place, { type: 'QUEST_ACCEPTED', sender: 'Ann Test', self: true, quest: 7, channels: ['quests'] });
 
 describe('computeScenes', () => {
+  it('takes in a trade between two lines, but not a letter, which is private', () => {
+    const happened = (type: string) => line(5, undefined, { type, sender: 'Ann Test', self: true, channels: ['@x'] });
+    const [scene] = computeScenes([line(0), happened('TRADE'), happened('MAIL'), line(10)]);
+    expect(scene!.ids).toHaveLength(3);
+    expect(scene!.lines).toBe(3);
+  });
+
   it('starts a new scene after a gap', () => {
     expect(sizes([line(0), line(SCENE_GAP), line(2 * SCENE_GAP + 1)])).toEqual([2, 1]);
   });
@@ -141,7 +148,19 @@ describe('scenes of a StoryLog file', () => {
       ['The Stockade', 3],
       ["Elwynn Forest, Goldshire, Lion's Pride Inn", 1],
       ['Dun Morogh', 3],
+      // The trade, the fight and the flight happened between Borin's lines, so they are part of it.
+      ['Elwynn Forest, Goldshire', 17],
     ]);
+  });
+
+  it('take in what happened between the lines, but count only who spoke as taking part', () => {
+    const road = scenes.at(-1)!;
+    expect(road.name).toBe('Into Westfall');
+    const types = road.ids.map((id) => doc.items.find((item) => item.id === id)!.type);
+    expect(types).toEqual(expect.arrayContaining(['TRADE', 'FIGHT', 'DUEL', 'TRAVEL', 'GOSSIP']));
+    // After the last line, the letter and the new level are no part of it.
+    expect(types).not.toContain('MAIL');
+    expect(road.participants.map((person) => person.name)).toEqual(['Borin Ironvow', 'Innkeeper Farley']);
   });
 
   it('say who talked, by roleplay name', () => {
@@ -157,7 +176,7 @@ describe('scenes of a StoryLog file', () => {
 
   it('know the party, and that it did not outlast the evening', () => {
     // Borin spoke in the first two, so nobody was silently present.
-    expect(scenes.map((scene) => scene.present)).toEqual([[], [], [], []]);
+    expect(scenes.map((scene) => scene.present)).toEqual([[], [], [], [], []]);
     const quiet = doc.items.filter((item) => item.sender !== 'Borin Fixture');
     expect(computeScenes(quiet, doc.places, doc).map((scene) => scene.present)).toEqual([['Borin Ironvow'], ['Borin Ironvow'], [], []]);
   });

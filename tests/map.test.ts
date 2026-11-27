@@ -14,7 +14,10 @@ import { STORYLOG } from './helpers';
 
 const { items, places: all } = parseLog(STORYLOG);
 const places = all!;
-const messages = items.filter((item) => item.kind === 'message');
+/** The last session of the fixture is a day on the road, with its own tests below. */
+const ROAD = 1898900000;
+const messages = items.filter((item) => item.kind === 'message' && item.at < ROAD);
+const road = items.filter((item) => item.kind === 'message' && item.at > ROAD);
 const city = mapDots(messages, places, 1453);
 
 describe('the map', () => {
@@ -102,6 +105,25 @@ describe('the map', () => {
 
   it('names the subzone above its dots', () => {
     expect(placeLabels(city, places, fitView(city), 1200, 800).map((label) => label.text)).toEqual(['Cathedral Square']);
+  });
+
+  it('draws what happened where the recorder was, and an NPC in a dialogue around there', () => {
+    const goldshire = mapDots(road, places, 1429);
+    const trade = goldshire.find((dot) => dot.items.some((item) => item.type === 'TRADE'))!;
+    expect(trade).toMatchObject({ exact: true, speaker: 'Élowyn Testwood', x: 0.417 });
+    expect(goldshire.find((dot) => dot.speaker === 'Innkeeper Farley')).toMatchObject({ exact: false, npc: true });
+    expect(mapDots(road, places, 1453).flatMap((dot) => dot.items.map((item) => item.type))).toEqual(
+      expect.arrayContaining(['TRAVEL', 'MAIL']),
+    );
+  });
+
+  it('draws a duel or an invitation as the recorder’s, not as the other one standing near', () => {
+    const goldshire = mapDots(road, places, 1429);
+    const duels = goldshire.filter((dot) => dot.items.some((item) => item.type === 'DUEL'));
+    expect(duels).toMatchObject([{ exact: true, speaker: 'Élowyn Testwood', name: 'Élowyn Moonwhisper' }]);
+    // Borin's dots are what he said, not the duel he won.
+    const borin = goldshire.filter((dot) => dot.speaker === 'Borin Fixture').flatMap((dot) => dot.items.map((item) => item.type));
+    expect(borin).toEqual(['SAY', 'PARTY']);
   });
 });
 

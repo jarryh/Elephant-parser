@@ -22,14 +22,25 @@ local function addonName(volume)
 	return "StoryLog_Archive" .. volume
 end
 
--- Roughly the bytes that a session takes in the saved file. An add-on can't see files.
-function ns.sessionSize(session)
-	local bytes = 300
-	for _, message in ipairs(session.messages or {}) do
-		bytes = bytes + 80 + #(message.m or "")
-		if message.g then bytes = bytes + 12 + 4 * #message.g end
+-- Roughly the bytes that a value takes in the saved file, which has a line for each field:
+-- `["key"] = value,`. An add-on can't see files.
+local function size(value)
+	local kind = type(value)
+	if kind == "string" then return #value + 2 end
+	if kind == "number" then return #tostring(value) end
+	if kind ~= "table" then return 5 end
+	local bytes, count = 5, #value
+	for i = 1, count do bytes = bytes + size(value[i]) + 3 end
+	for key, item in pairs(value) do
+		if type(key) ~= "number" or key < 1 or key > count or key % 1 ~= 0 then
+			bytes = bytes + #tostring(key) + 10 + size(item)
+		end
 	end
-	return bytes + 190 * #(session.places or {}) + 150 * #(session.speakers or {})
+	return bytes
+end
+
+function ns.sessionSize(session)
+	return size(session)
 end
 
 local function measure(sessions)

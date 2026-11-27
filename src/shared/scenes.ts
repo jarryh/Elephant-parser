@@ -1,4 +1,5 @@
 /** Splits the roleplay of each character into scenes, and says who was in each. */
+import { isEvent } from './events';
 import { RP_TYPES } from './filter';
 import { isNpc, isQuest } from './format';
 import type { Cast } from './groups';
@@ -62,10 +63,10 @@ export function computeScenes(items: readonly LogItem[], places: readonly Place[
     if (!note && !(item.kind === 'message' && SCENE_TYPES.has(item.type))) continue;
 
     let scene = open.get(item.owner);
-    // NPCs talk whether or not anyone is roleplaying, and quests are taken on the way. So
-    // neither starts a scene, moves it or keeps it going: they only join one that a
-    // player's line carries on.
-    if (isNpc(item) || isQuest(item)) {
+    // NPCs talk whether or not anyone is roleplaying, and quests, trades and fights happen
+    // on the way. So none of them starts a scene, moves it or keeps it going: they only
+    // join one that a player's line carries on.
+    if (isNpc(item) || isQuest(item) || isEvent(item)) {
       scene?.ambient.push(item);
       continue;
     }
@@ -126,8 +127,8 @@ function describe({ owner, items, to }: Open, places: readonly Place[], { speake
     lines++;
     const where = item.place === undefined ? '' : placeName(places[item.place]);
     if (where) placeLines.set(where, (placeLines.get(where) ?? 0) + 1);
-    // A quest is the recorder's, but taking one is not a line of roleplay.
-    if (!item.sender || isQuest(item)) continue;
+    // A quest or a trade is the recorder's, but neither is a line of roleplay.
+    if (!item.sender || isQuest(item) || (isEvent(item) && !isNpc(item))) continue;
     spoke.add(item.sender);
 
     const npc = isNpc(item);

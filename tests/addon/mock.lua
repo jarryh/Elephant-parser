@@ -30,6 +30,7 @@ function issecretvalue(value) return value ~= nil and SECRET[value] == true end
 W = {
   regional = true, realm = "Testrealm", now = 1898622000, locale = "enUS", build = 16001,
   units = {}, infos = {}, rp = {}, printed = {}, maps = {}, quests = {}, timers = {}, addons = {},
+  profiles = {}, status = {}, inbox = {}, spells = {}, mounts = {}, worn = {},
 }
 -- The archive add-ons are installed, and have saved nothing yet.
 for volume = 1, 5 do W.addons["StoryLog_Archive" .. volume] = {} end
@@ -130,12 +131,22 @@ if not NO_QUESTLOG then
   end
 end
 
--- Timers run when a test says that time has passed.
-C_Timer = { After = function(_, callback) W.timers[#W.timers + 1] = callback end }
-function runTimers()
-  local due = W.timers
+-- Timers run when a test says that time has passed: all of them, or with `seconds` only
+-- those that are due by then, while the others wait that much less.
+C_Timer = { After = function(seconds, callback) W.timers[#W.timers + 1] = { left = seconds, callback = callback } end }
+function runTimers(seconds)
+  local waiting = W.timers
   W.timers = {}
-  for _, callback in ipairs(due) do callback() end
+  local due = {}
+  for _, timer in ipairs(waiting) do
+    if not seconds or timer.left <= seconds then
+      due[#due + 1] = timer
+    else
+      timer.left = timer.left - seconds
+      W.timers[#W.timers + 1] = timer
+    end
+  end
+  for _, timer in ipairs(due) do timer.callback() end
 end
 
 -- Load-on-demand add-ons. W.addons[name] = { saved = "the file's text", disabled =, forgets = }
@@ -175,11 +186,152 @@ if HOUSING then
   C_HousingNeighborhood = { GetNeighborhoodName = function() return out(W.hood) end }
 end
 
--- The part of Total RP 3 that the addon calls.
+-- The part of Total RP 3 that the addon calls. W.profiles[id] is laid out as Total RP 3
+-- keeps a profile; W.status[id] is 1 in character, 2 out of character.
 if TRP then
-  local function object(id) return { GetFullName = function() return out(W.rp[id]) end } end
+  local function object(id)
+    local function profile() return W.profiles[id] end
+    local function part(name, key)
+      return function()
+        local found = profile() and profile()[name]
+        return found and found[key]
+      end
+    end
+    return {
+      GetFullName = function() return out(W.rp[id]) end,
+      GetProfile = profile,
+      GetRoleplayStatus = function() return W.status[id] end,
+      GetFullTitle = part("characteristics", "FT"),
+      GetTitle = part("characteristics", "TI"),
+      GetCustomRace = part("characteristics", "RA"),
+      GetCustomClass = part("characteristics", "CL"),
+      GetCurrentlyText = part("character", "CU"),
+      GetCustomPronouns = function() return profile() and profile().pronouns end,
+      GetCustomGuildMembership = function() return { name = profile() and profile().guild } end,
+    }
+  end
   local static = { CreateFromCharacterID = function(id) assert(rawtype(id) == "string"); return object(id) end }
   AddOn_TotalRP3 = { Player = { static = static, GetCurrentUser = function() return object("player") end } }
+end
+
+-- Which events this client has: all but those in NO_EVENT.
+C_EventUtils = { IsEventValid = function(event) return not (NO_EVENT and NO_EVENT[event]) end }
+
+-- As in the game: the hook runs after the function, with its arguments.
+function hooksecurefunc(owner, name, hook)
+  if rawtype(owner) == "string" then owner, name, hook = _G, owner, name end
+  local original = owner[name]
+  assert(rawtype(original) == "function", "no function to hook: " .. tostring(name))
+  owner[name] = function(...)
+    local results = table.pack(original(...))
+    hook(...)
+    return table.unpack(results, 1, results.n)
+  end
+end
+
+-- The game's wording, in English.
+ERR_INVITE_PLAYER_S = "You have invited %s to join your group."
+ERR_INVITED_TO_GROUP_SS = "|Hplayer:%s|h[%s]|h has invited you to join a group."
+ERR_DECLINE_GROUP_S = "%s declines your group invitation."
+ERR_LEFT_GROUP_YOU = "You leave the group."
+ERR_GROUP_DISBANDED = "Your group has been disbanded."
+ERR_UNINVITE_YOU = "You have been removed from the group."
+ERR_JOINED_GROUP_S = "%s joins the party."
+ERR_LEFT_GROUP_S = "%s leaves the party."
+ERR_TRADE_COMPLETE = "Trade complete."
+LOOT_ITEM_SELF = "You receive loot: %s."
+LOOT_ITEM_SELF_MULTIPLE = "You receive loot: %sx%d."
+LOOT_ITEM_PUSHED_SELF = "You receive item: %s."
+LOOT_ITEM_PUSHED_SELF_MULTIPLE = "You receive item: %sx%d."
+LOOT_ITEM_CREATED_SELF = "You create: %s."
+LOOT_ITEM_CREATED_SELF_MULTIPLE = "You create: %sx%d."
+DUEL_WINNER_KNOCKOUT = "%1$s has defeated %2$s in a duel"
+DUEL_WINNER_RETREAT = "%2$s has fled from %1$s in a duel"
+ATTACHMENTS_MAX_SEND = 12
+ATTACHMENTS_MAX_RECEIVE = 16
+
+function UnitIsGroupLeader(unit) return out(W.leader ~= nil and W.leader == unit) end
+function UnitCanAttack(_, unit) return W.units[unit] ~= nil and W.units[unit].hostile == true end
+function UnitIsPlayer(unit)
+  local who = W.units[unit]
+  return who ~= nil and rawtype(who.guid) == "string" and who.guid:find("^Player%-") ~= nil
+end
+function UnitIsDeadOrGhost() return W.dead == true end
+function InCombatLockdown() return W.combat == true end
+function UnitOnTaxi() return W.taxi == true end
+function GetGuildInfo(unit) return out(W.units[unit] and W.units[unit].guild) end
+function GetGameTime() if W.gameTime then return out(W.gameTime[1], W.gameTime[2]) end end
+function StartDuel() end
+
+-- The trade window. W.trade = { mine = { { link =, count = } }, theirs = ..., myMoney =, theirMoney = }
+local function slotOf(side, slot) return W.trade and W.trade[side] and W.trade[side][slot] end
+function GetTradePlayerItemLink(slot) local it = slotOf("mine", slot); return out(it and it.link) end
+function GetTradeTargetItemLink(slot) local it = slotOf("theirs", slot); return out(it and it.link) end
+function GetTradePlayerItemInfo(slot) local it = slotOf("mine", slot); if it then return out(it.name or "Item", 1, it.count or 1, 2, true) end end
+function GetTradeTargetItemInfo(slot) local it = slotOf("theirs", slot); if it then return out(it.name or "Item", 1, it.count or 1, 2, true) end end
+function GetPlayerTradeMoney() return out(W.trade and W.trade.myMoney or 0) end
+function GetTargetTradeMoney() return out(W.trade and W.trade.theirMoney or 0) end
+
+-- Letters. W.outgoing = { items = { { link =, count = } }, money = }; W.inbox[i] = { sender =, subject =, body =, money =, items =, canReply = }
+function SendMail() end
+function GetSendMailItemLink(slot) local it = W.outgoing and W.outgoing.items[slot]; return it and it.link end
+function GetSendMailItem(slot) local it = W.outgoing and W.outgoing.items[slot]; if it then return "Item", 1, 0, it.count or 1, 2 end end
+function GetSendMailMoney() return W.outgoing and W.outgoing.money or 0 end
+function GetInboxHeaderInfo(index)
+  local letter = W.inbox[index]
+  if not letter then return nil end
+  return 1, nil, out(letter.sender), out(letter.subject), letter.money or 0, 0, 30, #(letter.items or {}), false, false, true, letter.canReply ~= false, false
+end
+function GetInboxText(index) return out(W.inbox[index] and W.inbox[index].body) end
+function GetInboxItemLink(index, slot) local it = W.inbox[index] and (W.inbox[index].items or {})[slot]; return it and it.link end
+function GetInboxItem(index, slot) local it = W.inbox[index] and (W.inbox[index].items or {})[slot]; if it then return "Item", 1, 0, it.count or 1, 2, true end end
+function InboxFrame_OnClick() end
+
+C_SummonInfo = {
+  GetSummonConfirmSummoner = function() return out(W.summoner) end,
+  GetSummonConfirmAreaName = function() return out(W.summonArea) end,
+  ConfirmSummon = function() end,
+}
+
+-- Dialogue windows, books and quest windows.
+C_GossipInfo = {
+  GetText = function() return out(W.gossip and W.gossip.text) end,
+  GetOptions = function()
+    local list = {}
+    for i, name in ipairs(W.gossip and W.gossip.options or {}) do
+      list[i] = { name = out(name), gossipOptionID = 100 + i, orderIndex = i - 1 }
+    end
+    return list
+  end,
+  SelectOption = function() end,
+  SelectOptionByIndex = function() end,
+}
+function ItemTextGetItem() return out(W.book and W.book.title) end
+function ItemTextGetText() return out(W.book and W.book.pages[W.book.page or 1]) end
+function ItemTextGetPage() return W.book and W.book.page or 1 end
+function GetQuestID() return W.window and W.window.id or 0 end
+function GetTitleText() return out(W.window and W.window.title) end
+function GetQuestText() return out(W.window and W.window.text) end
+function GetObjectiveText() return out(W.window and W.window.goal) end
+function GetRewardText() return out(W.window and W.window.reward) end
+
+-- Spells, mounts and what is worn. W.spells[id] = name, W.mounts[id] = mount ID, W.worn[slot] = link.
+C_Spell = { GetSpellName = function(id) return out(W.spells[id]) end }
+C_MountJournal = { GetMountFromSpell = function(id) return W.mounts[id] end }
+function GetInventoryItemLink(_, slot) return out(W.worn[slot]) end
+
+-- The calendar, which only some clients have.
+if CALENDAR then
+  C_DateAndTime = { GetCurrentCalendarTime = function() return { monthDay = 31, month = 10, year = 2026 } end }
+  C_Calendar = {
+    OpenCalendar = function() W.calendarAsked = true end,
+    GetMonthInfo = function() return { month = W.calendarMonth or 10, year = 2026 } end,
+    GetNumDayEvents = function() return #(W.holidays or {}) end,
+    GetDayEvent = function(_, _, index)
+      local event = W.holidays[index]
+      return { title = out(event.title), calendarType = event.kind or "HOLIDAY" }
+    end,
+  }
 end
 
 local frames = {}
@@ -189,6 +341,7 @@ function CreateFrame()
     if NO_EVENT and NO_EVENT[event] then error("Attempt to register unknown event " .. event) end
     self.events[event] = true
   end
+  function frame:RegisterUnitEvent(event) return self:RegisterEvent(event) end
   function frame:UnregisterEvent(event) self.events[event] = nil end
   function frame:SetScript(kind, handler) self.scripts[kind] = handler end
   frames[#frames + 1] = frame
@@ -198,6 +351,15 @@ function fire(event, ...)
   for _, frame in ipairs(frames) do
     if frame.events[event] then frame.scripts.OnEvent(frame, event, ...) end
   end
+end
+-- Every event that a frame has registered.
+function registeredEvents()
+  local list = {}
+  for _, frame in ipairs(frames) do
+    for event in pairs(frame.events) do list[#list + 1] = event end
+  end
+  table.sort(list)
+  return list
 end
 SlashCmdList = {}
 function print(...) W.printed[#W.printed + 1] = table.concat({ ... }, " ") end

@@ -297,7 +297,9 @@ export function Workbench({ loaded, initial, picker, notes, loadError, story }: 
         <span>Game saved the file: {new Date(file.modified).toLocaleString()}</span>
       </footer>
 
-      {storyModel && <StoryDialog model={storyModel} doc={doc} messages={messages} onClose={() => setStoryModel(null)} />}
+      {storyModel && (
+        <StoryDialog model={storyModel} doc={doc} messages={selection.story} onClose={() => setStoryModel(null)} />
+      )}
 
       {exporting && (
         <ExportDialog

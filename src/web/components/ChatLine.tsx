@@ -1,4 +1,5 @@
 import { memo, type MouseEvent } from 'react';
+import { isEvent } from '../../shared/events';
 import { isQuest, lineTag, speaker, typeColor } from '../../shared/format';
 import { parseMarkup } from '../../shared/markup';
 import { placeDetails, placeName } from '../../shared/places';
@@ -72,6 +73,11 @@ export const ChatLine = memo(function ChatLine({ item, place, game, showOwner, r
       <span className="body">
         {!marker && <span className="tag">[{lineTag(item)}] </span>}
         {item.language && <span className="tag">[{item.language}] </span>}
+        {item.ooc && (
+          <span className="flag" title="Total RP 3 said that they were out of character">
+            &lt;OOC&gt;{' '}
+          </span>
+        )}
         {item.flag && <span className="flag">&lt;{item.flag}&gt; </span>}
         {who && (
           <>
@@ -109,11 +115,16 @@ export const ChatLine = memo(function ChatLine({ item, place, game, showOwner, r
             </span>
           ),
         )}
-        {/* A quest names its NPC in the text. */}
-        {item.target && !isQuest(item) && (
-          <span className="target" title="Your target when you said it">
+        {/* A quest or an event names whoever took part in the text. */}
+        {item.target && !isQuest(item) && !isEvent(item) && (
+          <span className="target" title={item.self ? 'Your target when you said it' : 'Their target when they said it'}>
             {' '}
             → {item.target}
+          </span>
+        )}
+        {item.detail && (
+          <span className="detail" title={item.detail}>
+            {item.detail}
           </span>
         )}
       </span>

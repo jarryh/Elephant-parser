@@ -190,7 +190,11 @@ describe('StoryLog exports', () => {
   it('name the group where it changes', () => {
     const { messages } = cleaned({}, [], story);
     const text = exportText(messages, clock, story.places, story);
-    expect(text.match(/^\[Group\] .*$/gm)).toEqual(['[Group] Party: Borin Ironvow', '[Group] none']);
+    expect(text.match(/^\[Group\] .*$/gm)).toEqual([
+      '[Group] Party: Borin Ironvow',
+      '[Group] none',
+      '[Group] Party, led by Élowyn Moonwhisper: Borin Ironvow',
+    ]);
     expect(text.indexOf('[Group] Party')).toBeLessThan(text.indexOf('Well met'));
     expect(text).toContain('[Quest accepted] [A Test of Patience], from Gatekeeper Dummy');
     expect(exportMarkdown(messages, clock, story.places, story)).toContain('- *Group* Party: Borin Ironvow\n- `');
@@ -206,7 +210,19 @@ describe('StoryLog exports', () => {
       channels: ['Quests'],
       target: 'Gatekeeper Dummy',
     });
-    expect(rows.at(-1)).not.toHaveProperty('group');
+    expect(rows.find((row: { text: string }) => row.text === 'A new evening begins.')).not.toHaveProperty('group');
+  });
+
+  it('put letters and other long texts in full', () => {
+    const { messages } = cleaned({}, [], story);
+    const rows = JSON.parse(exportJson(messages, channelLabels(story), story.places, story)).messages;
+    expect(rows.find((row: { type: string }) => row.type === 'MAIL')).toMatchObject({
+      channels: ['Mail'],
+      detail: 'Thank you for the escort,\nand for the cloth back.',
+    });
+    expect(rows.find((row: { text: string }) => row.text === 'brb, doorbell')).toMatchObject({ outOfCharacter: true });
+    const text = exportText(messages, clock, story.places, story);
+    expect(text).toContain('[Mail] Sent a letter to Borin Fixture: “Your cloth”, with [Linen Cloth] ×5\n    Thank you for the escort,\n    and for the cloth back.');
   });
 
   it('put places in the JSON', () => {

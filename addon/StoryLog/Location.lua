@@ -1,19 +1,26 @@
--- Where the recorder and their group members are.
+-- Where the recorder and their group members are, who is in the group, and how the
+-- recorder travels.
 --
 -- The game gives positions for you and your group only, and none inside dungeons,
 -- raids and battlegrounds. Zone and instance names still work there.
 
 local _, ns = ...
-local try, filled, finite = ns.try, ns.filled, ns.finite
+local try, safe, filled, finite = ns.try, ns.safe, ns.filled, ns.finite
 
 -- A new place is saved only after moving this far.
 local MOVED_YARDS = 3
 local MOVED_ON_MAP = 0.002
 
 local NAME_KEYS = { "map", "zone", "sub", "mini", "inst", "indoors", "neighborhood", "house", "room", "cont" }
+-- What a place is called, as opposed to where on it you are.
+local PLACE_NAMES = { "zone", "sub", "mini", "inst", "neighborhood", "house", "room" }
 
 -- A raid that is filling up changes many times within seconds. It is saved as one line.
 local GROUP_SETTLES = 10
+-- How long after login the game may take to know the group that you are in.
+local LOGIN_SETTLES = 10
+-- How long you have to stay in a part of a zone before it counts as somewhere you went.
+local ZONE_SETTLES = 20
 
 local lastPlace = {}
 local roster = {}
@@ -57,8 +64,8 @@ local function addHousing(place)
 	if try(housing.IsInsideHouseOrPlot) == true then
 		local info = try(housing.GetCurrentHouseInfo)
 		if type(info) == "table" then
-			place.neighborhood = filled(ns.safe(info.neighborhoodName))
-			place.house = filled(ns.safe(info.houseName)) or filled(ns.safe(info.ownerName))
+			place.neighborhood = filled(safe(info.neighborhoodName))
+			place.house = filled(safe(info.houseName)) or filled(safe(info.ownerName))
 		end
 		if try(housing.IsInsideHouse) == true and C_HousingLayout then
 			place.room = filled(try(C_HousingLayout.GetRoomPlayerIsIn))
@@ -89,6 +96,13 @@ function ns.describePlayer()
 
 	addHousing(place)
 	return place
+end
+
+local function sameNames(old, new)
+	for _, key in ipairs(PLACE_NAMES) do
+		if old[key] ~= new[key] then return false end
+	end
+	return true
 end
 
 local function samePlace(old, new)
@@ -122,9 +136,15 @@ function ns.playerPlace()
 	return store("player", ns.describePlayer())
 end
 
-local function describeMember(guid)
+-- The unit of a group member, while that roster slot is still theirs.
+function ns.memberUnit(guid)
 	local unit = roster[guid]
-	if not unit or try(UnitGUID, unit) ~= guid then return nil end
+	if unit and try(UnitGUID, unit) == guid then return unit end
+end
+
+local function describeMember(guid)
+	local unit = ns.memberUnit(guid)
+	if not unit then return nil end
 
 	local place = {}
 	addPosition(place, unit)
@@ -132,7 +152,7 @@ local function describeMember(guid)
 
 	if place.map then
 		local info = try(C_Map.GetMapInfo, place.map)
-		if type(info) == "table" then place.zone = filled(ns.safe(info.name)) end
+		if type(info) == "table" then place.zone = filled(safe(info.name)) end
 	end
 	return place
 end
@@ -142,7 +162,16 @@ function ns.memberPlace(guid)
 	if place then return store(guid, place) end
 end
 
--- Saves who is in the group, when that has changed.
+--------------------------------------------------------------------------------
+-- The group
+
+-- The game says why a group ended in a message, which comes before or after the roster
+-- empties. So either the reason waits for the line, { why =, at = }, or the line waits
+-- for its reason, { line =, at = }.
+local ending, left
+-- Who led the group when it was last saved: { name =, guid = }.
+local lastLeader
+
 local function recordGroup(inRaid, units)
 	local settings = ns.db.settings
 	if not ns.session or not settings.recording or not settings.group then return end
@@ -157,32 +186,70 @@ local function recordGroup(inRaid, units)
 	local members = {}
 	for _, unit in ipairs(units) do
 		local name = ns.unitPlayerName(unit.unit)
-		if name then members[#members + 1] = { name = name, guid = unit.guid } end
+		if name then members[#members + 1] = { name = name, guid = unit.guid, unit = unit.unit } end
 	end
 	if #members < others then return end
 	if others == 0 then members = {} end
 	table.sort(members, function(a, b) return a.name < b.name end)
 
+	-- Who leads. When the game can't say for a moment, the one who led still does, if they
+	-- are still here: otherwise that moment would be a line, and its end another.
+	local leader
+	if #members > 0 then
+		if try(UnitIsGroupLeader, "player") == true then
+			leader = ns.me
+		else
+			for _, member in ipairs(members) do
+				if try(UnitIsGroupLeader, member.unit) == true then leader = member end
+			end
+		end
+		if not leader and lastLeader then
+			if lastLeader.guid == ns.me.guid then leader = ns.me end
+			for _, member in ipairs(members) do
+				if member.guid == lastLeader.guid then leader = member end
+			end
+		end
+	end
+
 	local parts = {}
 	for i, member in ipairs(members) do parts[i] = member.guid end
-	local key = #members == 0 and "" or (inRaid and "raid:" or "party:") .. table.concat(parts, ",")
+	local key = #members == 0 and "" or (inRaid and "raid:" or "party:") .. table.concat(parts, ",") .. "|" .. (leader and leader.guid or "")
 	if key == lastGroup then return end
+
+	local time = ns.now()
+	-- The first look of a session. Shortly after login, a group is one that you were in already.
 	local first = lastGroup == nil
+	local atLogin = time - ns.session.started <= LOGIN_SETTLES
+	if first and key == "" then
+		-- Not being in a group needs no line. At login the game may not know the group yet,
+		-- so "none" is believed only after a while.
+		if not atLogin then lastGroup = key end
+		return
+	end
 	lastGroup = key
-	-- Not being in a group needs no line, unless you just left one.
-	if first and key == "" then return end
+	lastLeader = leader and { name = leader.name, guid = leader.guid } or nil
 
 	local list = {}
-	for i, member in ipairs(members) do list[i] = ns.speakerIndex(member.name, member.guid, false) end
+	for i, member in ipairs(members) do list[i] = (ns.speakerIndex(member.name, member.guid, false)) end
+	local lead = leader and (ns.speakerIndex(leader.name, leader.guid, false))
+
+	local why
+	if key == "" then
+		if ending and time - ending.at <= GROUP_SETTLES then why = ending.why end
+		ending = nil
+	end
 
 	local messages = ns.session.messages
-	local last = messages[#messages]
-	local time = ns.now()
-	if last and last.e == "GROUP" and time - last.t < GROUP_SETTLES then
-		last.g, last.raid = list, inRaid or nil
+	local line = messages[#messages]
+	if line and line.e == "GROUP" and time - line.t < GROUP_SETTLES then
+		line.g, line.raid, line.lead, line.why = list, inRaid or nil, lead, why
 	else
-		ns.add({ t = time, e = "GROUP", g = list, raid = inRaid or nil, p = ns.playerPlace() })
+		line = ns.add({
+			t = time, e = "GROUP", g = list, raid = inRaid or nil, lead = lead, why = why,
+			start = first and atLogin or nil, p = ns.playerPlace(),
+		})
 	end
+	left = key == "" and not why and { line = line, at = time } or nil
 end
 
 function ns.updateRoster()
@@ -206,6 +273,8 @@ function ns.updateRoster()
 	if not ok then ns.say("the group could not be recorded: " .. tostring(problem)) end
 end
 
+ns.on("PARTY_LEADER_CHANGED", function() ns.updateRoster() end)
+
 -- For the status line: how many group members have a position right now.
 function ns.groupPositions()
 	local known, total = 0, 0
@@ -215,3 +284,131 @@ function ns.groupPositions()
 	end
 	return known, total
 end
+
+local function person(name)
+	name = ns.plainName(name)
+	return name and (ns.speakerIndex(ns.qualify(name), nil, false))
+end
+
+local function ended(why)
+	return function()
+		local time = ns.now()
+		if left and not left.line.why and #left.line.g == 0 and time - left.at <= GROUP_SETTLES then
+			left.line.why, left = why, nil
+		else
+			ending = { why = why, at = time }
+		end
+	end
+end
+
+ns.wording("SYSTEM", "ERR_LEFT_GROUP_YOU", "group", ended("left"))
+ns.wording("SYSTEM", "ERR_GROUP_DISBANDED", "group", ended("disbanded"))
+ns.wording("SYSTEM", "ERR_UNINVITE_YOU", "group", ended("removed"))
+ns.wording("SYSTEM", "ERR_INVITE_PLAYER_S", "group", function(name)
+	local to = person(name)
+	if to then ns.event("group", "INVITE", { k = "out", to = to }) end
+end)
+-- Retail links the name: "|Hplayer:%s|h[%s]|h has invited you to join a group."
+local function invited(first, second)
+	local from = person(second or first)
+	if from then ns.event("group", "INVITE", { k = "in", s = from }) end
+end
+ns.wording("SYSTEM", "ERR_INVITED_TO_GROUP_SS", "group", invited)
+ns.wording("SYSTEM", "ERR_INVITED_TO_GROUP_S", "group", invited)
+ns.wording("SYSTEM", "ERR_DECLINE_GROUP_S", "group", function(name)
+	local from = person(name)
+	if from then ns.event("group", "INVITE", { k = "declined", s = from }) end
+end)
+-- The group lines say these already.
+for _, name in ipairs({ "ERR_JOINED_GROUP_S", "ERR_LEFT_GROUP_S", "ERR_RAID_MEMBER_ADDED_S", "ERR_RAID_MEMBER_REMOVED_S" }) do
+	ns.wording("SYSTEM", name, "group", function() end)
+end
+
+--------------------------------------------------------------------------------
+-- Travel
+
+local function onTaxi()
+	return try(UnitOnTaxi, "player") == true
+end
+
+-- Saves where the recorder now is, unless the last line was there already.
+local function arrived()
+	if not ns.recording("travel") or onTaxi() then return end
+	local here = ns.describePlayer()
+	if not here.zone and not here.inst then return end
+	local messages = ns.session.messages
+	local last = messages[#messages]
+	local there = last and last.p and ns.session.places[last.p]
+	if there and sameNames(there, here) then return end
+	ns.event("travel", "ZONE", { p = store("player", here) })
+end
+
+-- Only the latest change of each kind counts. The game reports a new zone together with
+-- its first part, in either order, and that part must not put off the zone.
+local zoneChanges, partChanges = 0, 0
+
+ns.on("ZONE_CHANGED_NEW_AREA", function()
+	zoneChanges = zoneChanges + 1
+	partChanges = partChanges + 1
+	local mine = zoneChanges
+	-- The map has the new zone a moment later.
+	ns.after(1, function()
+		if mine == zoneChanges then arrived() end
+	end)
+end)
+
+local function movedWithin()
+	partChanges = partChanges + 1
+	local mine = partChanges
+	local before = ns.describePlayer()
+	ns.after(ZONE_SETTLES, function()
+		if mine == partChanges and sameNames(before, ns.describePlayer()) then arrived() end
+	end)
+end
+ns.on("ZONE_CHANGED", movedWithin)
+ns.on("ZONE_CHANGED_INDOORS", movedWithin)
+
+-- A flight: where it began, and when.
+local flight
+
+local function landed()
+	if not flight or onTaxi() then return false end
+	local trip = flight
+	flight = nil
+	ns.event("travel", "TRAVEL", { k = "flight", from = trip.from, n = ns.now() - trip.at })
+	return true
+end
+
+-- The game says that you got control back a little early, so this checks again.
+local function watchFlight()
+	if flight and not landed() then ns.after(5, watchFlight) end
+end
+
+ns.on("PLAYER_CONTROL_LOST", function()
+	ns.after(1, function()
+		if flight or not onTaxi() or not ns.recording("travel") then return end
+		flight = { from = ns.playerPlace(), at = ns.now() }
+		ns.after(5, watchFlight)
+	end)
+end)
+ns.on("PLAYER_CONTROL_GAINED", landed)
+
+-- A summons that is waiting for an answer.
+local summons
+
+ns.on("CONFIRM_SUMMON", function()
+	local info = C_SummonInfo
+	local who = filled(try(info and info.GetSummonConfirmSummoner or GetSummonConfirmSummoner))
+	local area = filled(try(info and info.GetSummonConfirmAreaName or GetSummonConfirmAreaName))
+	summons = { who = who, area = area, at = ns.now() }
+end)
+
+local function acceptSummons()
+	local offer = summons
+	summons = nil
+	if not offer or ns.now() - offer.at > 120 or not ns.recording("travel") then return end
+	ns.event("travel", "TRAVEL", { k = "summon", s = person(offer.who) or false, m = ns.clip(offer.area, 120) })
+end
+
+ns.hook(C_SummonInfo, "ConfirmSummon", acceptSummons)
+ns.hook("ConfirmSummon", acceptSummons)

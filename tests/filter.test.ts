@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseElephant } from '../src/shared/elephant';
 import {
+  channelLabels,
   compareChannels,
   computeFacets,
   createMatcher,
@@ -108,7 +109,9 @@ describe('StoryLog filters', () => {
       'That was close.',
     ]);
     expect(found({ places: ["Elwynn Forest › Goldshire, Lion's Pride Inn"] })).toEqual(['A new evening begins.']);
-    expect(found({ places: ['Elwynn Forest'] })).toEqual(['A new evening begins.']);
+    const elwynn = found({ places: ['Elwynn Forest'] });
+    expect(elwynn).toEqual(expect.arrayContaining(['A new evening begins.', 'Ready when you are.']));
+    expect(elwynn).not.toContain('Took the road. See you at the gate.');
   });
 
   it('match nothing by place in a file without places', () => {
@@ -121,19 +124,50 @@ describe('StoryLog filters', () => {
   });
 
   it('show the group where it changes, in the same way', () => {
-    expect(found({ channels: ['#3'], types: ['PARTY'] })).toContain('Party: Borin Ironvow');
-    expect(found({ from: 1898622001 })).not.toContain('Party: Borin Ironvow');
+    expect(found({ channels: ['#3'], types: ['PARTY'] })).toContain('In a party with Borin Ironvow');
+    expect(found({ from: 1898622001 })).not.toContain('In a party with Borin Ironvow');
   });
 
   it('keep quests with the roleplay types, in a channel of their own', () => {
     expect(found({ types: RP_TYPES }).filter((text) => text.includes('Test of Patience'))).toHaveLength(2);
     expect(found({ channels: ['quests'] })).toEqual([
-      'Party: Borin Ironvow',
+      'In a party with Borin Ironvow',
       'Note: The bargain',
       '[A Test of Patience], from Gatekeeper Dummy',
       '14 messages hidden by the game',
       '[A Test of Patience]',
+      'Joined a party with Borin Ironvow, led by Élowyn Moonwhisper',
+      '[Lost Necklace], from Innkeeper Farley',
+      'Note: Into Westfall',
     ]);
+  });
+
+  it('keep what happened with the roleplay types, each in a channel of its own', () => {
+    expect(found({ types: RP_TYPES })).toEqual(
+      expect.arrayContaining(['Traded with Borin Ironvow: gave 15s; got [Linen Cloth] ×5', 'Fought Defias Thug (25 s)']),
+    );
+    const fights = story.items
+      .filter(createMatcher({ ...NO_FILTERS, channels: ['@fights'] }, story.places))
+      .filter((item) => item.kind === 'message');
+    expect(fights.map((item) => item.text)).toEqual([
+      'Fought Defias Thug (25 s)',
+      'Borin Ironvow challenged Élowyn Moonwhisper to a duel',
+      'Borin Ironvow defeated Élowyn Moonwhisper in a duel',
+      'Reached level 12',
+    ]);
+    expect(channelLabels(story).get('@items')).toBe('Trades and items');
+  });
+
+  it('search the long text of a line too', () => {
+    expect(found({ text: 'old mill' })).toEqual(['Read “A Weathered Plaque”']);
+  });
+
+  it('keep letters out of the roleplay types, as whispers are', () => {
+    expect(RP_TYPES).not.toContain('MAIL');
+    expect(RP_TYPES).not.toContain('WHISPER');
+    expect(RP_TYPES).toContain('TRADE');
+    expect(found({ types: RP_TYPES }).some((text) => text.startsWith('Sent a letter'))).toBe(false);
+    expect(found({ channels: ['@mail'] }).some((text) => text.startsWith('Sent a letter'))).toBe(true);
   });
 
   it('but not outside the period, the character or the search', () => {
@@ -148,8 +182,9 @@ describe('StoryLog filters', () => {
 
   it('count places within the chosen period', () => {
     const { places } = computeFacets(story, { owners: [], from: null, to: null }, createClock('UTC').day);
-    expect(places.get('Stormwind City')).toBe(15);
+    expect(places.get('Stormwind City')).toBe(19);
     expect(places.get('Stormwind City › Cathedral Square')).toBe(15);
+    expect(places.get('Stormwind City › Trade District')).toBe(4);
     expect(places.get('The Stockade')).toBe(3);
   });
 
